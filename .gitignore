@@ -1,0 +1,29 @@
+# Dependencies & builds
+node_modules/
+dist/
+**/node_modules/
+**/dist/
+
+# Local data & secrets
+data/
+**/data/
+uploads/
+**/uploads/
+.env
+.deploy.env
+*.db
+*.db-wal
+*.db-shm
+
+# dual
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / local
+.cursor/
+*.log
+_tmp_*

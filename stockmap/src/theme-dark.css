@@ -1,0 +1,381 @@
+/* Тёмная тема UI (как в менеджере задач). Выкл: data-ui-theme="classic" или кнопка «Светлая». */
+
+html[data-ui-theme="dark"] {
+  --ink: #f3f5f7;
+  --muted: #9aa3ad;
+  --line: rgba(255, 255, 255, 0.1);
+  --panel: rgba(42, 46, 52, 0.94);
+  --accent: #f08a2e;
+  --accent-deep: #ff9b42;
+  --danger: #ef6a5c;
+  --floor-edge: #6a737c;
+  --steel: #8a949e;
+  --card: #2a2e34;
+  --card-soft: #323740;
+  --chip: #3a404a;
+  --orange-grad: linear-gradient(105deg, #f59a2a 0%, #ffb347 100%);
+}
+
+html[data-ui-theme="dark"] body {
+  color: var(--ink);
+  background:
+    radial-gradient(900px 520px at 8% -10%, rgba(240, 138, 46, 0.12) 0%, transparent 55%),
+    radial-gradient(700px 420px at 96% 4%, rgba(80, 90, 110, 0.35) 0%, transparent 50%),
+    linear-gradient(165deg, #1a1c20 0%, #141618 48%, #101214 100%);
+}
+
+html[data-ui-theme="dark"] .mode-switch,
+html[data-ui-theme="dark"] .grid-toggle,
+html[data-ui-theme="dark"] .tool-group {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--line);
+  border-radius: 999px;
+  padding: 0.22rem;
+}
+
+html[data-ui-theme="dark"] .btn.mode.active,
+html[data-ui-theme="dark"] .btn.grid-btn.active {
+  background: var(--orange-grad);
+  color: #1a1208;
+  border-color: transparent;
+  box-shadow: 0 4px 14px rgba(240, 138, 46, 0.28);
+}
+
+html[data-ui-theme="dark"] .btn.grid-btn.active:hover:not(:disabled) {
+  background: linear-gradient(105deg, #ff9b42 0%, #ffc060 100%);
+}
+
+html[data-ui-theme="dark"] .brand {
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .brand-icon {
+  color: var(--accent);
+}
+
+html[data-ui-theme="dark"] .btn {
+  border-radius: 999px;
+  background: var(--card-soft);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .btn:hover:not(:disabled) {
+  background: #3d4450;
+  transform: translateY(-1px);
+}
+
+html[data-ui-theme="dark"] .btn.primary {
+  background: var(--orange-grad);
+  color: #1a1208;
+  border-color: transparent;
+  box-shadow: 0 6px 18px rgba(240, 138, 46, 0.28);
+}
+
+html[data-ui-theme="dark"] .btn.primary:hover:not(:disabled) {
+  background: linear-gradient(105deg, #ff9b42 0%, #ffc060 100%);
+}
+
+html[data-ui-theme="dark"] .btn.primary.active {
+  background: var(--orange-grad);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+html[data-ui-theme="dark"] .btn.danger {
+  color: #ff8f84;
+  border-color: rgba(239, 106, 92, 0.35);
+  background: rgba(239, 106, 92, 0.12);
+}
+
+html[data-ui-theme="dark"] .btn.ghost {
+  color: var(--muted);
+}
+
+html[data-ui-theme="dark"] .btn.ghost:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-ui-theme="dark"] .btn.tool.active,
+html[data-ui-theme="dark"] .btn.tool-dd-trigger.active {
+  background: var(--orange-grad);
+  color: #1a1208;
+  border-color: transparent;
+}
+
+html[data-ui-theme="dark"] .btn.tool.active:hover:not(:disabled) {
+  background: linear-gradient(105deg, #ff9b42 0%, #ffc060 100%);
+}
+
+html[data-ui-theme="dark"] .btn.tool-dd-trigger,
+html[data-ui-theme="dark"] .btn.tool,
+html[data-ui-theme="dark"] .btn.grid-btn {
+  background: transparent;
+  border-color: transparent;
+}
+
+html[data-ui-theme="dark"] .btn.tool:hover:not(:disabled),
+html[data-ui-theme="dark"] .btn.grid-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+html[data-ui-theme="dark"] .theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem 0.5rem 0.65rem;
+}
+
+html[data-ui-theme="dark"] .theme-toggle-icon,
+.theme-toggle-icon {
+  display: grid;
+  place-items: center;
+  line-height: 0;
+}
+
+html[data-ui-theme="dark"] .field input,
+html[data-ui-theme="dark"] .field select,
+html[data-ui-theme="dark"] .item-detail-field input,
+html[data-ui-theme="dark"] .item-detail-field textarea,
+html[data-ui-theme="dark"] .users-create select {
+  background: var(--card);
+  border-color: var(--line);
+  color: var(--ink);
+  border-radius: 999px;
+}
+
+html[data-ui-theme="dark"] .item-detail-field textarea {
+  border-radius: 16px;
+}
+
+html[data-ui-theme="dark"] .field input:focus,
+html[data-ui-theme="dark"] .item-detail-field input:focus,
+html[data-ui-theme="dark"] .item-detail-field textarea:focus {
+  border-color: rgba(240, 138, 46, 0.65);
+  box-shadow: 0 0 0 3px rgba(240, 138, 46, 0.18);
+}
+
+html[data-ui-theme="dark"] .banner {
+  background: rgba(239, 106, 92, 0.14);
+  color: #ffb0a8;
+  border-color: rgba(239, 106, 92, 0.3);
+  border-radius: 16px;
+}
+
+html[data-ui-theme="dark"] .canvas-wrap {
+  border-radius: 22px;
+  border-color: rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 30%),
+    #2a3038;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 22px 48px rgba(0, 0, 0, 0.35);
+}
+
+html[data-ui-theme="dark"] .spawn-menu,
+html[data-ui-theme="dark"] .tool-dd-menu {
+  background: var(--card);
+  border-color: var(--line);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  border-radius: 18px;
+}
+
+html[data-ui-theme="dark"] .spawn-menu button:hover,
+html[data-ui-theme="dark"] .tool-dd-item:hover {
+  background: rgba(240, 138, 46, 0.16);
+}
+
+html[data-ui-theme="dark"] .spawn-menu button.active,
+html[data-ui-theme="dark"] .tool-dd-item.active {
+  background: var(--orange-grad);
+  color: #1a1208;
+}
+
+html[data-ui-theme="dark"] .zoom-btn,
+html[data-ui-theme="dark"] .hud {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--muted);
+  border-radius: 999px;
+}
+
+html[data-ui-theme="dark"] .hud.has-selection {
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .interior-label {
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .interior-stage {
+  border-radius: 22px;
+  border-color: rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(700px 380px at 50% 0%, rgba(150, 158, 168, 0.35) 0%, transparent 60%),
+    linear-gradient(180deg, #7a828c 0%, #6a727c 55%, #5e666f 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 18px 40px rgba(0, 0, 0, 0.3);
+}
+
+html[data-ui-theme="dark"] .shelf-row-btn {
+  background: var(--card-soft);
+  border-color: var(--line);
+  color: var(--ink);
+  border-radius: 14px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+html[data-ui-theme="dark"] .shelf-row-btn.active {
+  background: var(--orange-grad);
+  border-color: transparent;
+  color: #1a1208;
+  box-shadow: 0 6px 16px rgba(240, 138, 46, 0.3);
+}
+
+html[data-ui-theme="dark"] .shelf-row-add,
+html[data-ui-theme="dark"] .shelf-row-remove {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .shelf-popup {
+  background: var(--card);
+  border-color: var(--line);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  border-radius: 18px;
+}
+
+html[data-ui-theme="dark"] .shelf-popup-item:hover {
+  background: rgba(240, 138, 46, 0.16);
+}
+
+html[data-ui-theme="dark"] .shelf-popup-cancel {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+}
+
+html[data-ui-theme="dark"] .item-detail {
+  background: var(--card);
+  border-color: var(--line);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.5);
+  border-radius: 22px;
+}
+
+html[data-ui-theme="dark"] .warehouse-search input,
+html[data-ui-theme="dark"] .catalog-search {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .warehouse-search-panel,
+html[data-ui-theme="dark"] .catalog-picker,
+html[data-ui-theme="dark"] .catalog-list {
+  background: var(--card);
+  border-color: var(--line);
+}
+
+html[data-ui-theme="dark"] .catalog-tabs {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-ui-theme="dark"] .catalog-tabs button.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .catalog-chip {
+  background: rgba(240, 138, 46, 0.16);
+  border-color: rgba(240, 138, 46, 0.35);
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .item-detail-backdrop,
+html[data-ui-theme="dark"] .shelf-popup-backdrop,
+html[data-ui-theme="dark"] .users-backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+html[data-ui-theme="dark"] .login-screen {
+  background:
+    radial-gradient(900px 480px at 12% -8%, rgba(240, 138, 46, 0.14) 0%, transparent 55%),
+    radial-gradient(700px 420px at 88% 110%, rgba(70, 80, 100, 0.35) 0%, transparent 50%),
+    linear-gradient(165deg, #1a1c20 0%, #141618 48%, #101214 100%);
+}
+
+html[data-ui-theme="dark"] .login-card {
+  background: var(--card);
+  border-color: var(--line);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.4);
+  border-radius: 22px;
+}
+
+html[data-ui-theme="dark"] .login-brand {
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .auth-chip {
+  background: var(--chip);
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+html[data-ui-theme="dark"] .users-panel {
+  background: var(--card);
+  border-color: var(--line);
+  box-shadow: 0 22px 50px rgba(0, 0, 0, 0.5);
+  border-radius: 22px;
+}
+
+html[data-ui-theme="dark"] .users-create,
+html[data-ui-theme="dark"] .users-list li {
+  background: var(--card-soft);
+  border-color: var(--line);
+  border-radius: 16px;
+}
+
+html[data-ui-theme="dark"] .mobile-dock {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+html[data-ui-theme="dark"] .mobile-dock .enter-btn {
+  box-shadow: 0 10px 28px rgba(240, 138, 46, 0.32);
+}
+
+/* Classic theme: keep toggle readable too */
+html[data-ui-theme="classic"] .theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem 0.5rem 0.65rem;
+}
+
+.login-theme-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.35rem;
+}
+
+.interior-bar .theme-toggle {
+  margin-left: 0.25rem;
+}
+
+@media (max-width: 720px) {
+  .theme-toggle-label {
+    display: none;
+  }
+
+  html[data-ui-theme="dark"] .theme-toggle,
+  html[data-ui-theme="classic"] .theme-toggle {
+    width: 2.55rem;
+    height: 2.55rem;
+    padding: 0;
+    justify-content: center;
+    border-radius: 999px;
+  }
+}
