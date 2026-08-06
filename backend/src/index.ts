@@ -26,6 +26,34 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:5173";
 
+/** Allow localhost + LAN origins (phone on same Wi‑Fi). */
+function corsOrigin(
+  origin: string | undefined,
+  cb: (err: Error | null, allow?: boolean) => void
+) {
+  if (!origin) {
+    cb(null, true);
+    return;
+  }
+  if (origin === FRONTEND_URL) {
+    cb(null, true);
+    return;
+  }
+  try {
+    const url = new URL(origin);
+    const host = url.hostname;
+    const local =
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host);
+    cb(null, local);
+  } catch {
+    cb(null, false);
+  }
+}
+
 getDb();
 ensureUploadDirs();
 seedDatabase();
@@ -37,7 +65,7 @@ if (!isPushConfigured()) {
 
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    origin: corsOrigin,
     credentials: true,
   })
 );
@@ -63,6 +91,6 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Backend running on http://0.0.0.0:${PORT}`);
 });
