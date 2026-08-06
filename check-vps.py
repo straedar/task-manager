@@ -1,9 +1,20 @@
-import paramiko
+import os
 import sys
+from pathlib import Path
+
+import paramiko
+
+# Reuse .deploy.env loader from deploy.py
+sys.path.insert(0, str(Path(__file__).parent))
+import deploy  # noqa: E402
+
+if not deploy.PASSWORD:
+    print("DEPLOY_PASSWORD is not set. Create .deploy.env (see .deploy.env.example).", file=sys.stderr)
+    sys.exit(1)
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect("176.12.69.195", username="root", password="EbAtMatSpm14!", timeout=30)
+client.connect(deploy.HOST, username=deploy.USER, password=deploy.PASSWORD, timeout=30)
 cmds = [
     "pm2 status",
     "pm2 logs task-manager-api --lines 30 --nostream",
