@@ -384,7 +384,7 @@ export function CreatePresetDialog({ open, onOpenChange, onCreated }: CreatePres
               </div>
 
               <div className="w-full">
-                <span className="mb-2 block text-sm font-medium text-gray-700">Срок по умолчанию</span>
+                <span className="mb-2 block text-sm font-medium text-gray-700">Дедлайн</span>
                 <div className="flex w-full rounded-2xl bg-gray-100 p-1">
                   <button
                     type="button"
@@ -393,7 +393,7 @@ export function CreatePresetDialog({ open, onOpenChange, onCreated }: CreatePres
                       hasDeadline ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"
                     }`}
                   >
-                    До 19:00
+                    Со сроком
                   </button>
                   <button
                     type="button"

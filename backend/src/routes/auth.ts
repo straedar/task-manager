@@ -15,6 +15,10 @@ import {
 } from "../db/queries/users.js";
 import { getRoleById, getDefaultEmployeeRoleId } from "../db/queries/roles.js";
 import {
+  createPasswordRestoreCode,
+  redeemPasswordRestoreCode,
+} from "../db/queries/passwordRestore.js";
+import {
   setSessionCookie,
   clearSessionCookie,
   requireAuth,
@@ -43,6 +47,12 @@ const patchUserSchema = z.object({
 
 const changePasswordSchema = z.object({
   current_password: z.string().min(1, "Введите текущий пароль"),
+  new_password: z.string().min(4, "Новый пароль — минимум 4 символа"),
+});
+
+const restorePasswordSchema = z.object({
+  nickname: z.string().min(1, "Введите никнейм"),
+  code: z.string().min(4, "Введите код восстановления"),
   new_password: z.string().min(4, "Новый пароль — минимум 4 символа"),
 });
 
@@ -118,6 +128,24 @@ router.post("/change-password", requireAuth, (req: AuthRequest, res) => {
 
   updateUserPassword(user.id, bcrypt.hashSync(new_password, 10));
   res.json({ ok: true });
+});
+
+router.post("/restore-password", (req, res) => {
+  const parsed = restorePasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+
+  const redeemed = redeemPasswordRestoreCode(parsed.data.nickname, parsed.data.code);
+  if (!redeemed.ok) {
+    res.status(400).json({ error: redeemed.error });
+    return;
+  }
+
+  updateUserPassword(redeemed.user_id, bcrypt.hashSync(parsed.data.new_password, 10));
+  setSessionCookie(res, redeemed.user_id);
+  res.json({ user: getUserAuthById(redeemed.user_id) });
 });
 
 router.get("/users", (_req, res) => {
@@ -238,6 +266,25 @@ router.delete("/admin/users/:id", requireAuth, adminGate, (req, res) => {
     return;
   }
   res.json({ ok: true });
+});
+
+router.post("/admin/users/:id/restore-code", requireAuth, adminGate, (req: AuthRequest, res) => {
+  const id = Number(req.params.id);
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: "Неверный ID" });
+    return;
+  }
+  const target = getUserById(id);
+  if (!target) {
+    res.status(404).json({ error: "Пользователь не найден" });
+    return;
+  }
+  const { code, expires_at } = createPasswordRestoreCode(id, req.user!.id);
+  res.json({
+    code,
+    expires_at,
+    nickname: target.nickname,
+  });
 });
 
 export default router;

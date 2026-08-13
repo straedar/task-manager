@@ -57,6 +57,12 @@ export function NewsDetailPage() {
     Boolean(item) &&
     (manageAny || (item!.author_id === user.id && can("news.delete_own")));
 
+  const feedPath = (channel?: string) => {
+    if (channel === "warehouse") return "/news?channel=warehouse";
+    if (channel === "patch") return "/news?channel=patch";
+    return "/news";
+  };
+
   const onDelete = async () => {
     if (!item || deleting) return;
     const ok = await confirm({
@@ -67,7 +73,7 @@ export function NewsDetailPage() {
     setDeleting(true);
     try {
       await api.deleteNews(item.id);
-      navigate("/news", { replace: true });
+      navigate(feedPath(item.channel), { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось удалить");
       setDeleting(false);
@@ -79,7 +85,7 @@ export function NewsDetailPage() {
       <div className="mb-4 flex items-center justify-between gap-2">
         <HubBackButton />
         <Link
-          to="/news"
+          to={feedPath(item?.channel)}
           className="inline-flex items-center gap-1.5 rounded-full bg-[var(--surface)] px-3 py-2 text-sm font-medium text-[var(--text-secondary)] shadow-soft transition hover:text-[var(--accent-from)]"
         >
           <ArrowLeft className="h-4 w-4" />

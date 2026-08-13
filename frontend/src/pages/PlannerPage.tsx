@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import {
   CalendarDays,
   CheckSquare,
   ChevronLeft,
   ChevronRight,
   ListTodo,
+  MessageCircle,
   Pencil,
   Trash2,
 } from "lucide-react";
@@ -75,6 +76,7 @@ function matchesChecklistAssignee(checklist: Checklist, assigneeId: string): boo
 export function PlannerPage() {
   const { user, loading: authLoading, can } = useAuth();
   const { confirm, alert } = useDialog();
+  const navigate = useNavigate();
   const [monthKey, setMonthKey] = useState(() => moscowDateKey().slice(0, 7) + "-01");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [checklists, setChecklists] = useState<Checklist[]>([]);
@@ -441,6 +443,19 @@ export function PlannerPage() {
               <p>Создал: {detailTask.creator.nickname}</p>
             </div>
 
+            <button
+              type="button"
+              onClick={() => {
+                const id = detailTask.id;
+                setDetailTask(null);
+                navigate(`/tasks/t/${id}`);
+              }}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-orange-200 bg-orange-50 py-3 text-sm font-medium text-orange-600 transition hover:bg-orange-100"
+            >
+              <MessageCircle className="h-4 w-4" />
+              Открыть с обсуждением
+            </button>
+
             {canManageTask(detailTask) && (
               <div className="flex gap-2 border-t border-gray-100 pt-4">
                 <button
@@ -511,6 +526,11 @@ export function PlannerPage() {
               <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-700">
                 Чеклист
               </span>
+              {detailChecklist.is_shared && (
+                <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-medium text-orange-700">
+                  Общий
+                </span>
+              )}
               {detailChecklist.is_private && (
                 <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
                   Приватный
@@ -529,18 +549,44 @@ export function PlannerPage() {
                   className={`rounded-2xl px-3 py-2 text-sm ${
                     item.completed_at
                       ? "bg-gray-50 text-gray-400 line-through"
-                      : "bg-sky-50/60 text-gray-800"
+                      : item.claimed_by
+                        ? "bg-sky-50 text-gray-800"
+                        : "bg-sky-50/60 text-gray-800"
                   }`}
                 >
-                  {item.title}
+                  <span className="block">{item.title}</span>
+                  {item.claimed_by && !item.completed_at && item.claimant && (
+                    <span className="mt-0.5 block text-[11px] text-sky-600">
+                      В работе: {item.claimant.nickname}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
 
             <div className="space-y-1 text-xs text-gray-400">
-              <p>Исполнитель: {detailChecklist.assignee.nickname}</p>
-              <p>Создал: {detailChecklist.creator.nickname}</p>
+              {detailChecklist.is_shared ? (
+                <p>Постановщик: {detailChecklist.creator.nickname}</p>
+              ) : (
+                <>
+                  <p>Исполнитель: {detailChecklist.assignee.nickname}</p>
+                  <p>Создал: {detailChecklist.creator.nickname}</p>
+                </>
+              )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const id = detailChecklist.id;
+                setDetailChecklist(null);
+                navigate(`/tasks/c/${id}`);
+              }}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-sky-200 bg-sky-50 py-3 text-sm font-medium text-sky-700 transition hover:bg-sky-100"
+            >
+              <MessageCircle className="h-4 w-4" />
+              Открыть с обсуждением
+            </button>
 
             {canManageChecklist(detailChecklist) && (
               <div className="flex gap-2 border-t border-gray-100 pt-4">

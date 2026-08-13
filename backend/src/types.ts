@@ -84,6 +84,9 @@ export interface ChecklistItem {
   title: string;
   position: number;
   completed_at: string | null;
+  claimed_by: number | null;
+  claimed_at: string | null;
+  claimant: UserPublic | null;
 }
 
 export interface Checklist {
@@ -98,6 +101,7 @@ export interface Checklist {
   completed_at: string | null;
   auto_completed: boolean;
   is_private: boolean;
+  is_shared: boolean;
 }
 
 export interface ChecklistWithDetails extends Checklist {

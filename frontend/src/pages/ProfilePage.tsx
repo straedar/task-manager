@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { Camera, Pencil, Trash2, Trophy } from "lucide-react";
+import {
+  Camera,
+  ChevronRight,
+  MessageSquarePlus,
+  Pencil,
+  Trash2,
+  Trophy,
+} from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useDialog } from "../context/DialogContext";
@@ -16,8 +23,8 @@ import {
 
 const KPI_ITEMS: { key: keyof ProfileKpi; label: string; hint: string }[] = [
   { key: "completed", label: "Выполнено", hint: "Успешно закрытые задачи и чеклисты" },
-  { key: "expired", label: "Просрочено", hint: "Закрыты по сроку / не выполнены вовремя" },
-  { key: "active", label: "В работе", hint: "Сейчас в процессе (в т.ч. открытые с дедлайном)" },
+  { key: "expired", label: "Просрочено", hint: "Просроченные / не выполненные вовремя (в т.ч. открытые чеклисты после срока)" },
+  { key: "active", label: "В работе", hint: "Сейчас в процессе" },
   { key: "expecting", label: "Ожидают", hint: "Ещё не начаты" },
 ];
 
@@ -46,6 +53,12 @@ export function ProfilePage() {
     targetId != null &&
     Number.isInteger(targetId) &&
     targetId === user!.id;
+
+  const feedbackPath = isOwn
+    ? "/profile/feedback"
+    : targetId != null
+      ? `/profile/${targetId}/feedback`
+      : "/profile/feedback";
 
   const load = useCallback(async () => {
     if (targetId == null || !Number.isInteger(targetId) || targetId < 1) {
@@ -313,6 +326,26 @@ export function ProfilePage() {
             </div>
           </section>
 
+          <Link
+            to={feedbackPath}
+            className="flex items-center gap-3 rounded-3xl bg-[var(--surface)] p-4 shadow-soft transition hover:ring-2 hover:ring-[var(--accent-from)]/30"
+          >
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--accent-from)] to-[var(--accent-to)] text-white">
+              <MessageSquarePlus className="h-5 w-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-[var(--text-primary)]">
+                Проблемы и улучшения
+              </span>
+              <span className="mt-0.5 block text-xs text-[var(--text-muted)]">
+                {isOwn
+                  ? "Сообщить о проблеме или предложить изменение"
+                  : "Обращения этого сотрудника"}
+              </span>
+            </span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-[var(--text-faint)]" />
+          </Link>
+
           <section className="rounded-3xl border border-dashed border-[var(--border)] bg-[var(--surface)]/60 p-5 text-center">
             <Trophy className="mx-auto mb-2 h-8 w-8 text-[var(--text-faint)]" />
             <p className="text-sm font-semibold text-[var(--text-primary)]">Достижения</p>
@@ -386,6 +419,7 @@ export function ProfilePage() {
           </Modal>
         </>
       )}
+
     </div>
   );
 }

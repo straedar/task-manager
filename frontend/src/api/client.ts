@@ -26,6 +26,12 @@ export const api = {
       body: JSON.stringify({ nickname, password }),
     }),
 
+  restorePassword: (nickname: string, code: string, new_password: string) =>
+    request<{ user: User }>("/api/auth/restore-password", {
+      method: "POST",
+      body: JSON.stringify({ nickname, code, new_password }),
+    }),
+
   logout: () =>
     request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
 
@@ -116,6 +122,12 @@ export const api = {
   deleteUser: (id: number) =>
     request<{ ok: boolean }>(`/api/auth/admin/users/${id}`, { method: "DELETE" }),
 
+  createRestoreCode: (id: number) =>
+    request<{ code: string; expires_at: string; nickname: string }>(
+      `/api/auth/admin/users/${id}/restore-code`,
+      { method: "POST" }
+    ),
+
   listRoles: () => request<{ roles: import("../types").Role[] }>("/api/roles"),
 
   getPermissionCatalog: () =>
@@ -148,6 +160,17 @@ export const api = {
 
   getTasks: () => request<{ tasks: Task[] }>("/api/tasks"),
 
+  getTask: (id: number) => request<{ task: Task }>(`/api/tasks/${id}`),
+
+  listTaskMessages: (id: number) =>
+    request<{ messages: import("../types").ItemMessage[] }>(`/api/tasks/${id}/messages`),
+
+  postTaskMessage: (id: number, body: string) =>
+    request<{ message: import("../types").ItemMessage }>(`/api/tasks/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+
   getAssignableUsers: () =>
     request<{ users: User[]; has_subordinates: boolean }>("/api/tasks/assignable-users"),
 
@@ -171,6 +194,9 @@ export const api = {
 
   startTask: (id: number) =>
     request<{ task: Task }>(`/api/tasks/${id}/start`, { method: "POST" }),
+
+  restoreTask: (id: number) =>
+    request<{ task: Task }>(`/api/tasks/${id}/restore`, { method: "POST" }),
 
   deleteTask: (id: number) =>
     request<{ ok: boolean }>(`/api/tasks/${id}`, { method: "DELETE" }),
@@ -230,6 +256,23 @@ export const api = {
 
   getChecklists: () => request<{ checklists: Checklist[] }>("/api/checklists"),
 
+  getChecklist: (id: number) =>
+    request<{ checklist: Checklist }>(`/api/checklists/${id}`),
+
+  listChecklistMessages: (id: number) =>
+    request<{ messages: import("../types").ItemMessage[] }>(
+      `/api/checklists/${id}/messages`
+    ),
+
+  postChecklistMessage: (id: number, body: string) =>
+    request<{ message: import("../types").ItemMessage }>(
+      `/api/checklists/${id}/messages`,
+      {
+        method: "POST",
+        body: JSON.stringify({ body }),
+      }
+    ),
+
   createChecklist: (data: {
     title: string;
     assignee_id: number;
@@ -238,6 +281,7 @@ export const api = {
     planned_for?: string | null;
     expires_at?: string | null;
     is_private?: boolean;
+    is_shared?: boolean;
   }) =>
     request<{ checklist: Checklist }>("/api/checklists", {
       method: "POST",
@@ -254,6 +298,7 @@ export const api = {
       planned_for?: string | null;
       expires_at?: string | null;
       is_private?: boolean;
+      is_shared?: boolean;
     }
   ) =>
     request<{ checklist: Checklist }>(`/api/checklists/${id}`, {
@@ -261,14 +306,25 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  toggleChecklistItem: (checklistId: number, itemId: number, completed: boolean) =>
+  toggleChecklistItem: (
+    checklistId: number,
+    itemId: number,
+    payload: boolean | { action: "claim" | "complete" | "uncomplete" }
+  ) =>
     request<{ checklist: Checklist }>(
       `/api/checklists/${checklistId}/items/${itemId}/toggle`,
       {
         method: "POST",
-        body: JSON.stringify({ completed }),
+        body: JSON.stringify(
+          typeof payload === "boolean" ? { completed: payload } : payload
+        ),
       }
     ),
+
+  restoreChecklist: (id: number) =>
+    request<{ checklist: Checklist }>(`/api/checklists/${id}/restore`, {
+      method: "POST",
+    }),
 
   deleteChecklist: (id: number) =>
     request<{ ok: boolean }>(`/api/checklists/${id}`, { method: "DELETE" }),
@@ -352,6 +408,22 @@ export const api = {
       items: import("../types").ReferenceComponent[];
     }>(`/api/reference/products/${productId}/components`),
 
+  setProductComponents: (
+    productId: number,
+    items: {
+      component_id: number;
+      quantity: number;
+      display_as?: "name" | "tag";
+    }[]
+  ) =>
+    request<{
+      product: import("../types").ReferenceProduct;
+      items: import("../types").ReferenceComponent[];
+    }>(`/api/reference/products/${productId}/components`, {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    }),
+
   createProduct: (data: { name: string; tag: string }) =>
     request<{ item: import("../types").ReferenceProduct }>("/api/reference/products", {
       method: "POST",
@@ -367,14 +439,31 @@ export const api = {
   deleteProduct: (id: number) =>
     request<{ ok: boolean }>(`/api/reference/products/${id}`, { method: "DELETE" }),
 
-  listComponents: (q = "") =>
-    request<{ items: import("../types").ReferenceComponent[] }>(
-      `/api/reference/components${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`
-    ),
+  listComponents: (
+    q = "",
+    filters?: { type_id?: number | null; product_id?: number | null }
+  ) => {
+    const params = new URLSearchParams();
+    if (q.trim()) params.set("q", q.trim());
+    if (filters?.type_id != null && filters.type_id > 0) {
+      params.set("type_id", String(filters.type_id));
+    }
+    if (filters?.product_id != null && filters.product_id > 0) {
+      params.set("product_id", String(filters.product_id));
+    }
+    const qs = params.toString();
+    return request<{ items: import("../types").ReferenceComponent[] }>(
+      `/api/reference/components${qs ? `?${qs}` : ""}`
+    );
+  },
 
   createComponent: (data: {
     name: string;
-    product_links?: { product_id: number; display_as: "name" | "tag" }[];
+    product_links?: {
+      product_id: number;
+      display_as: "name" | "tag";
+      quantity?: number;
+    }[];
     product_ids?: number[];
     type_id?: number | null;
     type_name?: string | null;
@@ -388,7 +477,11 @@ export const api = {
     id: number,
     data: {
       name: string;
-      product_links?: { product_id: number; display_as: "name" | "tag" }[];
+      product_links?: {
+        product_id: number;
+        display_as: "name" | "tag";
+        quantity?: number;
+      }[];
       product_ids?: number[];
       type_id?: number | null;
       type_name?: string | null;
@@ -422,8 +515,11 @@ export const api = {
   deleteTag: (id: number) =>
     request<{ ok: boolean }>(`/api/reference/tags/${id}`, { method: "DELETE" }),
 
-  listNews: () =>
-    request<{ items: import("../types").NewsPostListItem[] }>("/api/news"),
+  listNews: (channel: import("../types").NewsChannel = "company") =>
+    request<{
+      items: import("../types").NewsPostListItem[];
+      channel: import("../types").NewsChannel;
+    }>(`/api/news?channel=${encodeURIComponent(channel)}`),
 
   getNews: (id: number) =>
     request<{ item: import("../types").NewsPost }>(`/api/news/${id}`),
@@ -431,6 +527,7 @@ export const api = {
   createNews: (data: {
     title: string;
     body_html: string;
+    channel?: "company" | "warehouse";
     patch?: { version: string; release_day: string; global: boolean };
   }) =>
     request<{ item: import("../types").NewsPost; version?: string }>("/api/news", {
@@ -469,4 +566,42 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(prefs),
     }),
+
+  listFeedback: (authorId?: number) => {
+    const q =
+      authorId != null ? `?author_id=${encodeURIComponent(String(authorId))}` : "";
+    return request<{ items: import("../types").FeedbackBatch[] }>(
+      `/api/feedback${q}`
+    );
+  },
+
+  getFeedback: (id: number) =>
+    request<{ item: import("../types").FeedbackBatch }>(`/api/feedback/${id}`),
+
+  createFeedback: (items: import("../types").FeedbackItemInput[]) =>
+    request<{ item: import("../types").FeedbackBatch }>("/api/feedback", {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    }),
+
+  updateFeedback: (id: number, items: import("../types").FeedbackItemInput[]) =>
+    request<{ item: import("../types").FeedbackBatch }>(`/api/feedback/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ items }),
+    }),
+
+  updateFeedbackReview: (
+    id: number,
+    items: import("../types").FeedbackItemReviewInput[]
+  ) =>
+    request<{ item: import("../types").FeedbackBatch }>(
+      `/api/feedback/${id}/review`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ items }),
+      }
+    ),
+
+  deleteFeedback: (id: number) =>
+    request<{ ok: boolean }>(`/api/feedback/${id}`, { method: "DELETE" }),
 };

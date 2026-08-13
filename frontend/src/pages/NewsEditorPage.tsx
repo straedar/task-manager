@@ -11,6 +11,8 @@ export function NewsEditorPage() {
   const { id: idParam } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const isPatchDraft = searchParams.get("patch") === "1";
+  const newsChannel =
+    searchParams.get("channel") === "warehouse" ? "warehouse" : "company";
   const isNew = !idParam;
   const editId = idParam ? Number(idParam) : NaN;
   const { user, loading: authLoading, can } = useAuth();
@@ -29,6 +31,9 @@ export function NewsEditorPage() {
     version_patch: string;
     version_global: string;
   } | null>(null);
+  const [editChannel, setEditChannel] = useState<"company" | "warehouse" | "patch" | null>(
+    null
+  );
 
   const canRelease =
     Boolean(user) &&
@@ -40,6 +45,14 @@ export function NewsEditorPage() {
     if (!patchMeta) return null;
     return globalUpdate ? patchMeta.version_global : patchMeta.version_patch;
   }, [patchMeta, globalUpdate]);
+
+  const cancelPath = (() => {
+    if (!isNew && editChannel === "warehouse") return "/news?channel=warehouse";
+    if (!isNew && editChannel === "patch") return "/news?channel=patch";
+    if (isNew && isPatchDraft) return "/news?channel=patch";
+    if (isNew && newsChannel === "warehouse") return "/news?channel=warehouse";
+    return "/news";
+  })();
 
   useEffect(() => {
     if (!isNew || !isPatchDraft || !user) return;
@@ -94,6 +107,7 @@ export function NewsEditorPage() {
         setTitle(item.title);
         setBodyHtml(item.body_html || "<p></p>");
         setAuthorId(item.author_id);
+        setEditChannel(item.channel);
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message || "Не удалось загрузить");
@@ -117,7 +131,7 @@ export function NewsEditorPage() {
   if (!can("app.news")) return <Navigate to="/" replace />;
 
   if (isNew && isPatchDraft && !canRelease) {
-    return <Navigate to="/news" replace />;
+    return <Navigate to="/news?channel=patch" replace />;
   }
 
   if (isNew && !isPatchDraft && !can(objectPerm("news", "posts", "create"))) {
@@ -149,6 +163,7 @@ export function NewsEditorPage() {
         const payload: {
           title: string;
           body_html: string;
+          channel?: "company" | "warehouse";
           patch?: { version: string; release_day: string; global: boolean };
         } = { title: t, body_html: bodyHtml };
         if (isPatchDraft && patchMeta && selectedVersion) {
@@ -157,6 +172,8 @@ export function NewsEditorPage() {
             release_day: patchMeta.day_key,
             global: globalUpdate,
           };
+        } else {
+          payload.channel = newsChannel;
         }
         const { item } = await api.createNews(payload);
         navigate(`/news/${item.id}`, { replace: true });
@@ -173,12 +190,20 @@ export function NewsEditorPage() {
     }
   };
 
+  const editorTitle = isPatchDraft
+    ? "Патчноут"
+    : isNew
+      ? newsChannel === "warehouse"
+        ? "Новость склада"
+        : "Новость компании"
+      : "Редактирование";
+
   return (
-    <div className="mx-auto min-h-dvh max-w-2xl px-4 pb-12 pt-4">
+    <div className="mx-auto min-h-dvh max-w-2xl px-4 pb-[max(3rem,env(safe-area-inset-bottom))] pt-4">
       <div className="mb-4 flex items-center justify-between gap-2">
         <HubBackButton />
         <Link
-          to={isNew ? "/news" : `/news/${editId}`}
+          to={isNew ? cancelPath : `/news/${editId}`}
           className="rounded-full bg-[var(--surface)] px-3 py-2 text-sm font-medium text-[var(--text-secondary)] shadow-soft"
         >
           Отмена
@@ -186,7 +211,7 @@ export function NewsEditorPage() {
       </div>
 
       <h1 className="mb-5 text-2xl font-bold tracking-tight text-[var(--text-primary)]">
-        {isPatchDraft ? "Патчноут" : isNew ? "Новая новость" : "Редактирование"}
+        {editorTitle}
       </h1>
 
       {loading ? (
@@ -246,7 +271,13 @@ export function NewsEditorPage() {
               Текст
             </span>
             <NewsRichEditor
-              key={isNew ? (isPatchDraft ? "patch" : "new") : `edit-${editId}`}
+              key={
+                isNew
+                  ? isPatchDraft
+                    ? "patch"
+                    : `new-${newsChannel}`
+                  : `edit-${editId}`
+              }
               value={bodyHtml}
               onChange={setBodyHtml}
               disabled={saving}

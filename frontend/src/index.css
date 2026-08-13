@@ -405,6 +405,22 @@ html:not([data-theme="light"]) .card-accent-desc {
   }
 }
 
+/* Спид-дайал каналов новостей: выезд вверх от кнопки «Новости» */
+@keyframes news-fan-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-news-fan {
+  animation: news-fan-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 .wheel-picker-column {
   scrollbar-width: none;
   -ms-overflow-style: none;

@@ -1,17 +1,49 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
-import { Newspaper, Plus, Rocket } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Building2, Home, Newspaper, Rocket } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import { objectPerm } from "../apps";
 import { HubBackButton } from "../components/HubBackButton";
-import type { NewsPostListItem } from "../types";
+import { NewsBottomNav } from "../components/NewsBottomNav";
+import type { NewsChannel, NewsPostListItem } from "../types";
 import { can as userCan, isRoot } from "../types";
 import { formatNewsWhen } from "../utils/newsDates";
+
+const FEED_META: Record<
+  NewsChannel,
+  { title: string; subtitle: string; Icon: typeof Newspaper; empty: string }
+> = {
+  company: {
+    title: "Новости компании",
+    subtitle: "Объявления для всей компании",
+    Icon: Building2,
+    empty: "Пока нет новостей компании",
+  },
+  warehouse: {
+    title: "Новости склада",
+    subtitle: "Объявления склада",
+    Icon: Home,
+    empty: "Пока нет новостей склада",
+  },
+  patch: {
+    title: "Патчноуты",
+    subtitle: "Обновления приложения",
+    Icon: Rocket,
+    empty: "Пока нет патчноутов",
+  },
+};
+
+function parseFeed(raw: string | null): NewsChannel {
+  if (raw === "warehouse" || raw === "patch" || raw === "company") return raw;
+  return "company";
+}
 
 export function NewsFeedPage() {
   const { user, loading: authLoading, can } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const feed = useMemo(() => parseFeed(searchParams.get("channel")), [searchParams]);
   const [items, setItems] = useState<NewsPostListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -24,21 +56,37 @@ export function NewsFeedPage() {
       userCan(user!, "news.release_patch") ||
       userCan(user!, "news.manage_any"));
 
+  const [lastNewsFeed, setLastNewsFeed] = useState<"company" | "warehouse">(
+    () => (feed === "warehouse" ? "warehouse" : "company")
+  );
+
+  useEffect(() => {
+    if (feed === "company" || feed === "warehouse") setLastNewsFeed(feed);
+  }, [feed]);
+
+  const setFeed = useCallback(
+    (next: NewsChannel) => {
+      if (next === "company" || next === "warehouse") setLastNewsFeed(next);
+      setSearchParams(next === "company" ? {} : { channel: next }, { replace: true });
+    },
+    [setSearchParams]
+  );
+
   const load = useCallback(() => {
     setLoading(true);
     setError("");
     api
-      .listNews()
+      .listNews(feed)
       .then(({ items: next }) => setItems(next))
       .catch((err: Error) => setError(err.message || "Не удалось загрузить"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [feed]);
 
   useEffect(() => {
     if (!user || !can("app.news") || !canView) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, canView]);
+  }, [user?.id, canView, feed]);
 
   if (authLoading) {
     return (
@@ -58,48 +106,31 @@ export function NewsFeedPage() {
     );
   }
 
+  const meta = FEED_META[feed];
+  const HeaderIcon = meta.Icon;
+
+  const onCreate = () => {
+    if (feed === "patch") {
+      navigate("/news/new?patch=1");
+      return;
+    }
+    navigate(`/news/new?channel=${feed}`);
+  };
+
   return (
-    <div className="mx-auto min-h-dvh max-w-2xl px-4 pb-10 pt-4">
+    <div className="mx-auto min-h-dvh max-w-2xl px-4 pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-4">
       <header className="mb-6">
         <div className="mb-3">
           <HubBackButton />
         </div>
         <div className="flex items-center gap-2.5">
-          <Newspaper className="h-7 w-7 shrink-0 text-[var(--accent-from)]" />
+          <HeaderIcon className="h-7 w-7 shrink-0 text-[var(--accent-from)]" />
           <h1 className="text-2xl font-bold tracking-tight text-[var(--text-primary)]">
-            Новости
+            {meta.title}
           </h1>
         </div>
-        <p className="mt-1 text-sm text-[var(--text-muted)]">Лента объявлений команды</p>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">{meta.subtitle}</p>
       </header>
-
-      <div className="mb-5 flex flex-col gap-2.5">
-        {canRelease && (
-          <button
-            type="button"
-            onClick={() => navigate("/news/new?patch=1")}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold shadow-soft transition hover:opacity-95"
-            style={{
-              borderColor: "color-mix(in srgb, var(--accent-from) 40%, var(--border))",
-              background: "color-mix(in srgb, var(--accent-from) 10%, var(--surface))",
-              color: "var(--accent-from)",
-            }}
-          >
-            <Rocket className="h-4 w-4" />
-            Выпустить патчноут
-          </button>
-        )}
-        {canCreate && (
-          <button
-            type="button"
-            onClick={() => navigate("/news/new")}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl gradient-accent px-4 py-3 text-sm font-semibold text-white shadow-soft transition hover:opacity-95 active:scale-[0.99]"
-          >
-            <Plus className="h-4 w-4" />
-            Написать новость
-          </button>
-        )}
-      </div>
 
       {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
 
@@ -107,7 +138,7 @@ export function NewsFeedPage() {
         <p className="py-12 text-center text-[var(--text-faint)]">Загрузка...</p>
       ) : items.length === 0 ? (
         <p className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-12 text-center text-[var(--text-muted)]">
-          Пока нет новостей
+          {meta.empty}
         </p>
       ) : (
         <ul className="space-y-3">
@@ -146,6 +177,15 @@ export function NewsFeedPage() {
           ))}
         </ul>
       )}
+
+      <NewsBottomNav
+        feed={feed}
+        lastNewsFeed={lastNewsFeed}
+        canCreateNews={canCreate}
+        canReleasePatch={canRelease}
+        onFeedChange={setFeed}
+        onCreate={onCreate}
+      />
     </div>
   );
 }

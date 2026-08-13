@@ -32,9 +32,7 @@ const TASK_EVENTS: ToggleRow[] = [
   { key: "task_overdue", label: "Просрочка" },
   {
     key: "task_comments",
-    label: "Комментарии и упоминания",
-    hint: "Когда появятся комментарии",
-    disabled: true,
+    label: "Сообщения в задачах и чеклистах",
   },
 ];
 

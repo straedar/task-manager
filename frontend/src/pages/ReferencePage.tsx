@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { BookOpen, MapPin, Pencil, Search, Trash2, X } from "lucide-react";
+import { BookOpen, MapPin, Minus, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useDialog } from "../context/DialogContext";
 import { api } from "../api/client";
@@ -24,7 +24,11 @@ const TABS: { id: ReferenceKind; label: string }[] = [
 
 const NEW_TYPE_VALUE = "__new__";
 
-type ProductLinkDraft = { productId: number; displayAs: ProductLabelKind };
+type ProductLinkDraft = {
+  productId: number;
+  displayAs: ProductLabelKind;
+  quantity: number;
+};
 
 function shortTag(p: ReferenceProduct): string {
   return (p.tag || p.name).trim();
@@ -32,6 +36,11 @@ function shortTag(p: ReferenceProduct): string {
 
 function linkLabel(p: ReferenceProduct, displayAs: ProductLabelKind): string {
   return displayAs === "name" ? p.name : shortTag(p);
+}
+
+function clampQty(n: number): number {
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(1, Math.min(99999, Math.round(n)));
 }
 
 export function ReferencePage() {
@@ -43,7 +52,10 @@ export function ReferencePage() {
   const [components, setComponents] = useState<ReferenceComponent[]>([]);
   const [allProducts, setAllProducts] = useState<ReferenceProduct[]>([]);
   const [allTags, setAllTags] = useState<ReferenceTag[]>([]);
+  const [allComponentsForBom, setAllComponentsForBom] = useState<ReferenceComponent[]>([]);
   const [search, setSearch] = useState("");
+  const [filterTypeId, setFilterTypeId] = useState("");
+  const [filterProductId, setFilterProductId] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState<
@@ -57,7 +69,10 @@ export function ReferencePage() {
     product: ReferenceProduct;
     items: ReferenceComponent[];
     loading: boolean;
+    saving: boolean;
+    editing: boolean;
   } | null>(null);
+  const [bomAddId, setBomAddId] = useState("");
   const [name, setName] = useState("");
   const [productLinks, setProductLinks] = useState<ProductLinkDraft[]>([]);
   const [typeSelect, setTypeSelect] = useState("");
@@ -73,6 +88,7 @@ export function ReferencePage() {
   const canCreate = can(objectPerm("reference", tab, "create"));
   const canEdit = can(objectPerm("reference", tab, "edit"));
   const canDelete = can(objectPerm("reference", tab, "delete"));
+  const canEditProducts = can(objectPerm("reference", "products", "edit"));
   const canEditTags = can(objectPerm("reference", "tags", "edit"));
   const canDeleteTags = can(objectPerm("reference", "tags", "delete"));
   const canOpenStockmap = can("app.stockmap") || can("stockmap.view");
@@ -106,12 +122,54 @@ export function ReferencePage() {
         return {
           productId: link.productId,
           displayAs: link.displayAs,
+          quantity: link.quantity,
           label: linkLabel(p, link.displayAs),
           title: link.displayAs === "name" ? "Полное название" : "Короткий тег",
         };
       })
       .filter((x): x is NonNullable<typeof x> => x != null);
   }, [allProducts, productLinks]);
+
+  const filterTypeOptions = useMemo(
+    () => [
+      { value: "", label: "Все типы", depth: 0, isRoot: false },
+      ...allTags.map((t) => ({
+        value: String(t.id),
+        label: t.name,
+        depth: 0,
+        isRoot: false,
+      })),
+    ],
+    [allTags]
+  );
+
+  const filterProductOptions = useMemo(
+    () => [
+      { value: "", label: "Все теги / продукция", depth: 0, isRoot: false },
+      ...allProducts.map((p) => {
+        const tag = shortTag(p);
+        const label = tag !== p.name ? `${tag} · ${p.name}` : p.name;
+        return { value: String(p.id), label, depth: 0, isRoot: false };
+      }),
+    ],
+    [allProducts]
+  );
+
+  const bomAddOptions = useMemo(() => {
+    if (!productDrill) return [];
+    const linked = new Set(productDrill.items.map((c) => c.id));
+    return [
+      { value: "", label: "Выберите комплектующее…", depth: 0, isRoot: false },
+      ...allComponentsForBom
+        .filter((c) => !linked.has(c.id))
+        .map((c) => ({
+          value: String(c.id),
+          label: c.type ? `${c.name} · ${c.type.name}` : c.name,
+          depth: 0,
+          isRoot: false,
+        })),
+    ];
+  }, [allComponentsForBom, productDrill]);
 
   const pickerOptions = useMemo(() => {
     const q = productPickerQuery.trim().toLowerCase();
@@ -163,8 +221,13 @@ export function ReferencePage() {
         const { items } = await api.listProducts(search);
         setProducts(items);
       } else if (tab === "components" && can(objectPerm("reference", "components", "view"))) {
+        const typeId = filterTypeId ? Number(filterTypeId) : null;
+        const productId = filterProductId ? Number(filterProductId) : null;
         const [{ items }, productsRes, tagsRes] = await Promise.all([
-          api.listComponents(search),
+          api.listComponents(search, {
+            type_id: typeId,
+            product_id: productId,
+          }),
           can(objectPerm("reference", "products", "view"))
             ? api.listProducts()
             : Promise.resolve({ items: [] as ReferenceProduct[] }),
@@ -186,7 +249,7 @@ export function ReferencePage() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, search, user]);
+  }, [tab, search, filterTypeId, filterProductId, user]);
 
   useEffect(() => {
     if (user && can("app.reference")) void load();
@@ -200,20 +263,104 @@ export function ReferencePage() {
 
   useEffect(() => {
     setSearch("");
+    setFilterTypeId("");
+    setFilterProductId("");
   }, [tab]);
 
   const canEditComponents = can(objectPerm("reference", "components", "edit"));
 
   const openProductComponents = async (item: ReferenceProduct) => {
-    setProductDrill({ product: item, items: [], loading: true });
+    setBomAddId("");
+    setProductDrill({ product: item, items: [], loading: true, saving: false, editing: false });
     setError("");
     try {
-      const res = await api.listProductComponents(item.id);
-      setProductDrill({ product: res.product, items: res.items, loading: false });
+      const [res, comps] = await Promise.all([
+        api.listProductComponents(item.id),
+        canEditProducts
+          ? api.listComponents().catch(() => ({ items: [] as ReferenceComponent[] }))
+          : Promise.resolve({ items: [] as ReferenceComponent[] }),
+      ]);
+      setAllComponentsForBom(comps.items);
+      setProductDrill({
+        product: res.product,
+        items: res.items,
+        loading: false,
+        saving: false,
+        editing: false,
+      });
     } catch (err) {
       setProductDrill(null);
       setError(err instanceof Error ? err.message : "Ошибка загрузки комплектующих");
     }
+  };
+
+  const saveProductBom = async (
+    productId: number,
+    items: { component_id: number; quantity: number }[]
+  ) => {
+    setProductDrill((prev) => (prev ? { ...prev, saving: true } : prev));
+    setError("");
+    try {
+      const res = await api.setProductComponents(productId, items);
+      setProductDrill((prev) =>
+        prev
+          ? {
+              ...prev,
+              product: res.product,
+              items: res.items,
+              loading: false,
+              saving: false,
+            }
+          : null
+      );
+      if (tab === "components") await load();
+    } catch (err) {
+      setProductDrill((prev) => (prev ? { ...prev, saving: false } : prev));
+      setError(err instanceof Error ? err.message : "Не удалось сохранить состав");
+    }
+  };
+
+  const updateBomQuantity = (componentId: number, quantity: number) => {
+    if (!productDrill || !canEditProducts || !productDrill.editing) return;
+    const next = productDrill.items.map((c) =>
+      c.id === componentId ? { ...c, quantity: clampQty(quantity) } : c
+    );
+    setProductDrill({ ...productDrill, items: next });
+    void saveProductBom(
+      productDrill.product.id,
+      next.map((c) => ({
+        component_id: c.id,
+        quantity: clampQty(c.quantity ?? 1),
+      }))
+    );
+  };
+
+  const removeBomComponent = (componentId: number) => {
+    if (!productDrill || !canEditProducts || !productDrill.editing) return;
+    const next = productDrill.items.filter((c) => c.id !== componentId);
+    setProductDrill({ ...productDrill, items: next });
+    void saveProductBom(
+      productDrill.product.id,
+      next.map((c) => ({
+        component_id: c.id,
+        quantity: clampQty(c.quantity ?? 1),
+      }))
+    );
+  };
+
+  const addBomComponent = () => {
+    if (!productDrill || !canEditProducts || !productDrill.editing || !bomAddId) return;
+    const id = Number(bomAddId);
+    if (!Number.isFinite(id) || productDrill.items.some((c) => c.id === id)) return;
+    const next = [
+      ...productDrill.items.map((c) => ({
+        component_id: c.id,
+        quantity: clampQty(c.quantity ?? 1),
+      })),
+      { component_id: id, quantity: 1 },
+    ];
+    setBomAddId("");
+    void saveProductBom(productDrill.product.id, next);
   };
 
   const openCreate = () => {
@@ -241,6 +388,7 @@ export function ReferencePage() {
       item.products.map((p) => ({
         productId: p.id,
         displayAs: p.display_as === "name" ? "name" : "tag",
+        quantity: clampQty(p.quantity ?? 1),
       }))
     );
     setTypeSelect(item.type_id ? String(item.type_id) : "");
@@ -317,8 +465,23 @@ export function ReferencePage() {
         return prev.filter((l) => l.productId !== productId);
       }
       const next = prev.filter((l) => l.productId !== productId);
-      return [...next, { productId, displayAs }];
+      return [
+        ...next,
+        {
+          productId,
+          displayAs,
+          quantity: existing?.quantity ?? 1,
+        },
+      ];
     });
+  };
+
+  const setLinkQuantity = (productId: number, quantity: number) => {
+    setProductLinks((prev) =>
+      prev.map((l) =>
+        l.productId === productId ? { ...l, quantity: clampQty(quantity) } : l
+      )
+    );
   };
 
   const handleSave = async (e: FormEvent) => {
@@ -343,6 +506,7 @@ export function ReferencePage() {
           product_links: productLinks.map((l) => ({
             product_id: l.productId,
             display_as: l.displayAs,
+            quantity: clampQty(l.quantity),
           })),
           type_id: creatingNewType || !typeSelect ? null : Number(typeSelect),
           type_name: creatingNewType ? newTypeName.trim() : null,
@@ -419,18 +583,40 @@ export function ReferencePage() {
       </header>
 
       {canView && (
-        <div className="relative mb-4">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={
-              tab === "products"
-                ? "Поиск по названию или тегу..."
-                : "Поиск комплектующих, типов или продукции..."
-            }
-            className="w-full rounded-2xl border border-gray-200 bg-white py-2.5 pl-10 pr-4 text-sm outline-none focus:border-orange-400"
-          />
+        <div className="mb-4 space-y-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={
+                tab === "products"
+                  ? "Поиск по названию или тегу..."
+                  : "Поиск комплектующих, типов или продукции..."
+              }
+              className="w-full rounded-2xl border border-gray-200 bg-white py-2.5 pl-10 pr-4 text-sm outline-none focus:border-orange-400"
+            />
+          </div>
+          {tab === "components" && (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Select
+                value={filterTypeId}
+                onChange={setFilterTypeId}
+                options={filterTypeOptions}
+                placeholder="Тип"
+                showAvatar={false}
+                dropdownPlacement="auto"
+              />
+              <Select
+                value={filterProductId}
+                onChange={setFilterProductId}
+                options={filterProductOptions}
+                placeholder="Тег / продукция"
+                showAvatar={false}
+                dropdownPlacement="auto"
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -512,7 +698,7 @@ export function ReferencePage() {
         )
       ) : components.length === 0 ? (
         <p className="rounded-3xl bg-white py-12 text-center text-sm text-gray-400 shadow-soft">
-          {search.trim()
+          {search.trim() || filterTypeId || filterProductId
             ? "Ничего не найдено"
             : canCreate
               ? "Пока пусто — нажмите +, чтобы добавить комплектующее"
@@ -525,27 +711,27 @@ export function ReferencePage() {
               key={item.id}
               className="rounded-2xl border border-gray-100 bg-white p-3 shadow-soft"
             >
-              {item.products.length > 0 && (
-                <div className="mb-2 flex flex-wrap gap-1.5">
-                  {item.products.map((p) => (
-                    <span
-                      key={p.id}
-                      title={p.display_as === "name" ? p.name : shortTag(p)}
-                      className="rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-600"
-                    >
-                      {p.label}
-                    </span>
-                  ))}
-                </div>
-              )}
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
-                  {item.type && (
-                    <p className="mb-0.5 text-xs font-medium text-orange-500">{item.type.name}</p>
-                  )}
                   <p className="font-medium text-gray-900">{item.name}</p>
-                  {item.products.length === 0 && (
+                  {item.products.length > 0 ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {item.products.map((p) => (
+                        <span
+                          key={p.id}
+                          title={p.display_as === "name" ? p.name : shortTag(p)}
+                          className="rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-600"
+                        >
+                          {p.label}
+                          {p.quantity > 1 ? ` ×${p.quantity}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
                     <p className="mt-1 text-xs text-gray-400">Без привязки к готовой продукции</p>
+                  )}
+                  {item.type && (
+                    <p className="mt-1 text-xs font-medium text-orange-500">{item.type.name}</p>
                   )}
                 </div>
                 <div className="flex shrink-0 gap-1">
@@ -588,98 +774,230 @@ export function ReferencePage() {
       )}
 
       {productDrill && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[min(92dvh,36rem)] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-soft">
-            <div className="mb-4 flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-orange-500">Готовая продукция</p>
-                <h2 className="text-lg font-semibold text-gray-900">{productDrill.product.name}</h2>
-                {productDrill.product.tag &&
-                  productDrill.product.tag !== productDrill.product.name && (
-                    <p className="mt-0.5 text-sm text-orange-600">Тег: {productDrill.product.tag}</p>
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
+          <div className="flex max-h-[min(92dvh,40rem)] w-full max-w-md flex-col overflow-hidden rounded-t-3xl bg-white shadow-soft sm:rounded-3xl">
+            <div className="shrink-0 border-b border-gray-100 px-5 pb-3 pt-3">
+              <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-gray-300" aria-hidden />
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-orange-500">Готовая продукция</p>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {productDrill.product.name}
+                  </h2>
+                  {productDrill.product.tag &&
+                    productDrill.product.tag !== productDrill.product.name && (
+                      <p className="mt-0.5 text-sm text-orange-600">
+                        Тег: {productDrill.product.tag}
+                      </p>
+                    )}
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {canOpenStockmap && (
+                    <button
+                      type="button"
+                      onClick={() => openOnMap(productDrill.product.name)}
+                      className="rounded-full p-2 text-gray-400 hover:bg-sky-50 hover:text-sky-600"
+                      aria-label="Где лежит на карте"
+                      title="Где лежит"
+                    >
+                      <MapPin className="h-4 w-4" />
+                    </button>
                   )}
-                <p className="mt-1 text-sm text-gray-500">Комплектующие с этим тегом</p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                {canOpenStockmap && (
                   <button
                     type="button"
-                    onClick={() => openOnMap(productDrill.product.name)}
-                    className="rounded-full p-2 text-gray-400 hover:bg-sky-50 hover:text-sky-600"
-                    aria-label="Где лежит на карте"
-                    title="Где лежит"
+                    onClick={() => {
+                      setProductDrill(null);
+                      setBomAddId("");
+                    }}
+                    className="text-gray-400 hover:text-gray-600"
+                    aria-label="Закрыть"
                   >
-                    <MapPin className="h-4 w-4" />
+                    <X className="h-5 w-5" />
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setProductDrill(null)}
-                  className="text-gray-400 hover:text-gray-600"
-                  aria-label="Закрыть"
-                >
-                  <X className="h-5 w-5" />
-                </button>
+                </div>
               </div>
+
+              {canEditProducts && (
+                <div className="mt-3 flex rounded-2xl bg-gray-100 p-1">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setProductDrill((prev) =>
+                        prev ? { ...prev, editing: false } : prev
+                      )
+                    }
+                    className={`flex-1 rounded-xl py-2 text-sm font-medium transition ${
+                      !productDrill.editing
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    Просмотр
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setProductDrill((prev) =>
+                        prev ? { ...prev, editing: true } : prev
+                      )
+                    }
+                    className={`flex-1 rounded-xl py-2 text-sm font-medium transition ${
+                      productDrill.editing
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-500"
+                    }`}
+                  >
+                    Редактирование
+                  </button>
+                </div>
+              )}
             </div>
 
-            {productDrill.loading ? (
-              <p className="py-8 text-center text-sm text-gray-400">Загрузка...</p>
-            ) : productDrill.items.length === 0 ? (
-              <p className="rounded-2xl bg-gray-50 py-8 text-center text-sm text-gray-400">
-                Пока нет комплектующих с тегом «{productDrill.product.name}»
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {productDrill.items.map((c) => (
-                  <li
-                    key={c.id}
-                    className="flex items-center justify-between gap-2 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2.5"
-                  >
-                    <div className="min-w-0 flex-1">
-                      {c.type && (
-                        <p className="text-xs font-medium text-orange-500">{c.type.name}</p>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+              {productDrill.loading ? (
+                <p className="py-8 text-center text-sm text-gray-400">Загрузка...</p>
+              ) : (
+                <>
+                  <p className="mb-3 text-sm text-gray-500">Состав (комплектующие)</p>
+                  {productDrill.items.length === 0 ? (
+                    <p className="rounded-2xl bg-gray-50 py-8 text-center text-sm text-gray-400">
+                      Пока нет комплектующих в составе
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {productDrill.items.map((c) => {
+                        const qty = clampQty(c.quantity ?? 1);
+                        const bomEditing = Boolean(
+                          canEditProducts && productDrill.editing
+                        );
+                        return (
+                          <li
+                            key={c.id}
+                            className="rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2.5"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <p className="font-medium text-gray-900">{c.name}</p>
+                                {c.type && (
+                                  <p className="mt-0.5 text-xs font-medium text-orange-500">
+                                    {c.type.name}
+                                  </p>
+                                )}
+                                {!bomEditing && (
+                                  <p className="mt-1 text-xs text-gray-500">
+                                    Кол-во: {qty}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="flex shrink-0 gap-1">
+                                {canOpenStockmap && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openOnMap(c.name)}
+                                    className="rounded-full p-2 text-gray-400 hover:bg-white hover:text-sky-600"
+                                    aria-label="Где лежит на карте"
+                                    title="Где лежит"
+                                  >
+                                    <MapPin className="h-4 w-4" />
+                                  </button>
+                                )}
+                                {canEditComponents && bomEditing && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setProductDrill(null);
+                                      setTab("components");
+                                      openEditComponent(c);
+                                    }}
+                                    className="rounded-full p-2 text-gray-400 hover:bg-white hover:text-orange-500"
+                                    aria-label="Изменить комплектующее"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </button>
+                                )}
+                                {bomEditing && (
+                                  <button
+                                    type="button"
+                                    disabled={productDrill.saving}
+                                    onClick={() => removeBomComponent(c.id)}
+                                    className="rounded-full p-2 text-gray-400 hover:bg-white hover:text-red-500 disabled:opacity-50"
+                                    aria-label="Убрать из состава"
+                                    title="Убрать из состава"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            {bomEditing && (
+                              <div className="mt-2 flex items-center gap-2">
+                                <span className="text-xs text-gray-500">Кол-во</span>
+                                <button
+                                  type="button"
+                                  disabled={productDrill.saving || qty <= 1}
+                                  onClick={() => updateBomQuantity(c.id, qty - 1)}
+                                  className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 disabled:opacity-40"
+                                  aria-label="Меньше"
+                                >
+                                  <Minus className="h-3.5 w-3.5" />
+                                </button>
+                                <span className="min-w-[2rem] text-center text-sm font-semibold tabular-nums text-gray-900">
+                                  {qty}
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={productDrill.saving}
+                                  onClick={() => updateBomQuantity(c.id, qty + 1)}
+                                  className="flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 disabled:opacity-40"
+                                  aria-label="Больше"
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+
+                  {canEditProducts && productDrill.editing && (
+                    <div className="mt-4 space-y-2 border-t border-gray-100 pt-4">
+                      <p className="text-sm font-medium text-gray-700">
+                        Добавить комплектующее
+                      </p>
+                      <Select
+                        value={bomAddId}
+                        onChange={setBomAddId}
+                        options={bomAddOptions}
+                        placeholder="Выберите комплектующее…"
+                        showAvatar={false}
+                        dropdownPlacement="auto"
+                      />
+                      <button
+                        type="button"
+                        disabled={!bomAddId || productDrill.saving}
+                        onClick={addBomComponent}
+                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-medium text-white gradient-accent disabled:opacity-50"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Добавить в состав
+                      </button>
+                      {productDrill.saving && (
+                        <p className="text-center text-xs text-gray-400">Сохранение…</p>
                       )}
-                      <p className="font-medium text-gray-900">{c.name}</p>
                     </div>
-                    <div className="flex shrink-0 gap-1">
-                      {canOpenStockmap && (
-                        <button
-                          type="button"
-                          onClick={() => openOnMap(c.name)}
-                          className="rounded-full p-2 text-gray-400 hover:bg-white hover:text-sky-600"
-                          aria-label="Где лежит на карте"
-                          title="Где лежит"
-                        >
-                          <MapPin className="h-4 w-4" />
-                        </button>
-                      )}
-                      {canEditComponents && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setProductDrill(null);
-                            setTab("components");
-                            openEditComponent(c);
-                          }}
-                          className="rounded-full p-2 text-gray-400 hover:bg-white hover:text-orange-500"
-                          aria-label="Изменить комплектующее"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {dialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[min(92dvh,36rem)] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 shadow-soft">
+          <div className="max-h-[min(92dvh,36rem)] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-soft">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold">
                 {dialog.type === "create-product"
@@ -831,18 +1149,50 @@ export function ReferencePage() {
                     </div>
                     <div className="space-y-2">
                       {selectedLinkChips.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="space-y-2">
                           {selectedLinkChips.map((chip) => (
-                            <button
+                            <div
                               key={`${chip.productId}-${chip.displayAs}`}
-                              type="button"
-                              onClick={() => toggleProductLink(chip.productId, chip.displayAs)}
-                              title={chip.title}
-                              className="inline-flex max-w-full items-center gap-1 rounded-full bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700 ring-1 ring-orange-100 hover:bg-orange-100"
+                              className="flex items-center gap-2 rounded-2xl border border-orange-100 bg-orange-50/70 px-2.5 py-2"
                             >
-                              <span className="truncate">{chip.label}</span>
-                              <X className="h-3 w-3 shrink-0 opacity-70" />
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  toggleProductLink(chip.productId, chip.displayAs)
+                                }
+                                title={chip.title}
+                                className="inline-flex min-w-0 flex-1 items-center gap-1 text-left text-xs font-medium text-orange-700"
+                              >
+                                <span className="truncate">{chip.label}</span>
+                                <X className="h-3 w-3 shrink-0 opacity-70" />
+                              </button>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={chip.quantity <= 1}
+                                  onClick={() =>
+                                    setLinkQuantity(chip.productId, chip.quantity - 1)
+                                  }
+                                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-gray-600 disabled:opacity-40"
+                                  aria-label="Меньше"
+                                >
+                                  <Minus className="h-3 w-3" />
+                                </button>
+                                <span className="min-w-[1.5rem] text-center text-xs font-semibold tabular-nums text-orange-800">
+                                  {chip.quantity}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setLinkQuantity(chip.productId, chip.quantity + 1)
+                                  }
+                                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-gray-600"
+                                  aria-label="Больше"
+                                >
+                                  <Plus className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
                           ))}
                         </div>
                       )}

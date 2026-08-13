@@ -15,16 +15,20 @@ export function CreateHomeAction({ onCreated }: CreateHomeActionProps) {
   const [checklistOpen, setChecklistOpen] = useState(false);
   const [presetOpen, setPresetOpen] = useState(false);
 
+  const anyDialogOpen = pickOpen || taskOpen || checklistOpen || presetOpen;
+
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setPickOpen(true)}
-        className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full gradient-accent text-white shadow-lg transition hover:scale-105 sm:h-16 sm:w-16"
-        aria-label="Создать"
-      >
-        <Plus className="h-7 w-7 sm:h-8 sm:w-8" strokeWidth={2.5} />
-      </button>
+      {!anyDialogOpen && (
+        <button
+          type="button"
+          onClick={() => setPickOpen(true)}
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full gradient-accent text-white shadow-lg transition hover:scale-105 sm:h-16 sm:w-16"
+          aria-label="Создать"
+        >
+          <Plus className="h-7 w-7 sm:h-8 sm:w-8" strokeWidth={2.5} />
+        </button>
+      )}
 
       <Modal open={pickOpen} onClose={() => setPickOpen(false)} title="Что создать?">
         <div className="flex flex-col gap-3 p-5">

@@ -26,9 +26,20 @@ export type AlertOptions = {
   variant?: "danger" | "accent" | "info";
 };
 
+export type PromptOptions = {
+  title: string;
+  description?: string;
+  defaultValue?: string;
+  placeholder?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: "accent" | "info";
+};
+
 type DialogApi = {
   confirm: (options: ConfirmOptions | string) => Promise<boolean>;
   alert: (options: AlertOptions | string) => Promise<void>;
+  prompt: (options: PromptOptions) => Promise<string | null>;
 };
 
 type PendingConfirm = {
@@ -43,7 +54,13 @@ type PendingAlert = {
   resolve: () => void;
 };
 
-type Pending = PendingConfirm | PendingAlert | null;
+type PendingPrompt = {
+  kind: "prompt";
+  options: PromptOptions;
+  resolve: (value: string | null) => void;
+};
+
+type Pending = PendingConfirm | PendingAlert | PendingPrompt | null;
 
 const DialogContext = createContext<DialogApi | null>(null);
 
@@ -71,6 +88,7 @@ function AppDialogView({
   variant = "danger",
   onConfirm,
   onCancel,
+  input,
 }: {
   open: boolean;
   title: string;
@@ -81,10 +99,17 @@ function AppDialogView({
   variant?: "danger" | "accent" | "info";
   onConfirm: () => void;
   onCancel: () => void;
+  input?: {
+    value: string;
+    placeholder?: string;
+    onChange: (value: string) => void;
+  };
 }) {
   const [visible, setVisible] = useState(false);
   const titleId = useId();
   const descId = useId();
+  const inputId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) {
@@ -100,14 +125,30 @@ function AppDialogView({
     };
   }, [open]);
 
+  // Только при открытии: иначе каждый onChange создаёт новый `input`-объект,
+  // эффект снова вызывает select() и затирает набор одной буквой.
+  const hasInput = Boolean(input);
+  useEffect(() => {
+    if (!open || !hasInput) return;
+    const t = window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 40);
+    return () => window.clearTimeout(t);
+  }, [open, hasInput]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onCancel();
+      if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        onConfirm();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
+  }, [open, onCancel, onConfirm]);
 
   if (!open) return null;
 
@@ -157,6 +198,19 @@ function AppDialogView({
             {description}
           </p>
         )}
+        {input && (
+          <label className="tm-dialog__field" htmlFor={inputId}>
+            <span className="sr-only">Значение</span>
+            <input
+              ref={inputRef}
+              id={inputId}
+              value={input.value}
+              placeholder={input.placeholder}
+              onChange={(e) => input.onChange(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+        )}
         <div className="tm-dialog__actions">
           {showCancel && (
             <button type="button" className="tm-dialog__btn tm-dialog__btn--ghost" onClick={onCancel}>
@@ -173,12 +227,13 @@ function AppDialogView({
         </div>
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }
 
 export function DialogProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<Pending>(null);
+  const [promptValue, setPromptValue] = useState("");
   const pendingRef = useRef<Pending>(null);
   pendingRef.current = pending;
 
@@ -194,7 +249,14 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const api = useMemo(() => ({ confirm, alert }), [confirm, alert]);
+  const prompt = useCallback((options: PromptOptions) => {
+    return new Promise<string | null>((resolve) => {
+      setPromptValue(options.defaultValue ?? "");
+      setPending({ kind: "prompt", options, resolve });
+    });
+  }, []);
+
+  const api = useMemo(() => ({ confirm, alert, prompt }), [confirm, alert, prompt]);
 
   const closeConfirm = (value: boolean) => {
     const current = pendingRef.current;
@@ -207,6 +269,13 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     const current = pendingRef.current;
     if (!current || current.kind !== "alert") return;
     current.resolve();
+    setPending(null);
+  };
+
+  const closePrompt = (value: string | null) => {
+    const current = pendingRef.current;
+    if (!current || current.kind !== "prompt") return;
+    current.resolve(value);
     setPending(null);
   };
 
@@ -236,6 +305,24 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           showCancel={false}
           onConfirm={closeAlert}
           onCancel={closeAlert}
+        />
+      )}
+      {pending?.kind === "prompt" && (
+        <AppDialogView
+          open
+          title={pending.options.title}
+          description={pending.options.description}
+          confirmLabel={pending.options.confirmLabel ?? "Сохранить"}
+          cancelLabel={pending.options.cancelLabel ?? "Отмена"}
+          variant={pending.options.variant ?? "accent"}
+          showCancel
+          input={{
+            value: promptValue,
+            placeholder: pending.options.placeholder,
+            onChange: setPromptValue,
+          }}
+          onConfirm={() => closePrompt(promptValue)}
+          onCancel={() => closePrompt(null)}
         />
       )}
     </DialogContext.Provider>

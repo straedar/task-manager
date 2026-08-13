@@ -15,6 +15,7 @@ import {
   listComponentIdsByType,
   listProducts,
   listTags,
+  setProductComponents,
   updateComponent,
   updateProduct,
   updateTag,
@@ -41,12 +42,25 @@ const componentSchema = nameSchema.extend({
       z.object({
         product_id: z.number().int().positive(),
         display_as: z.enum(["name", "tag"]),
+        quantity: z.number().int().positive().max(99999).optional(),
       })
     )
     .optional(),
   product_ids: z.array(z.number().int().positive()).optional().default([]),
   type_id: z.number().int().positive().nullable().optional(),
   type_name: z.string().trim().max(120).nullable().optional(),
+});
+
+const productBomSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        component_id: z.number().int().positive(),
+        quantity: z.number().int().positive().max(99999),
+        display_as: z.enum(["name", "tag"]).optional(),
+      })
+    )
+    .max(500),
 });
 
 function denyUnless(
@@ -117,6 +131,31 @@ router.get("/products/:id/components", (req: AuthRequest, res) => {
     return;
   }
   res.json({ product, items: listComponentsByProduct(id) });
+});
+
+router.put("/products/:id/components", (req: AuthRequest, res) => {
+  if (!denyUnless(req, res, "products", "edit")) return;
+  const id = Number(req.params.id);
+  if (Number.isNaN(id)) {
+    res.status(400).json({ error: "Неверный ID" });
+    return;
+  }
+  if (!getProduct(id)) {
+    res.status(404).json({ error: "Не найдено" });
+    return;
+  }
+  const parsed = productBomSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Неверные данные" });
+    return;
+  }
+  const items = setProductComponents(id, parsed.data.items);
+  if (!items) {
+    res.status(404).json({ error: "Не найдено" });
+    return;
+  }
+  const product = getProduct(id);
+  res.json({ product, items });
 });
 
 router.post("/products", (req: AuthRequest, res) => {
@@ -246,7 +285,27 @@ router.delete("/tags/:id", (req: AuthRequest, res) => {
 router.get("/components", (req: AuthRequest, res) => {
   if (!denyUnlessCatalogRead(req, res)) return;
   const q = typeof req.query.q === "string" ? req.query.q : "";
-  res.json({ items: listComponents(q) });
+  const typeRaw = req.query.type_id;
+  const productRaw = req.query.product_id;
+  let type_id: number | null = null;
+  let product_id: number | null = null;
+  if (typeRaw != null && String(typeRaw).trim() !== "") {
+    const n = Number(typeRaw);
+    if (!Number.isInteger(n) || n < 1) {
+      res.status(400).json({ error: "Неверный type_id" });
+      return;
+    }
+    type_id = n;
+  }
+  if (productRaw != null && String(productRaw).trim() !== "") {
+    const n = Number(productRaw);
+    if (!Number.isInteger(n) || n < 1) {
+      res.status(400).json({ error: "Неверный product_id" });
+      return;
+    }
+    product_id = n;
+  }
+  res.json({ items: listComponents({ q, type_id, product_id }) });
 });
 
 router.post("/components", (req: AuthRequest, res) => {

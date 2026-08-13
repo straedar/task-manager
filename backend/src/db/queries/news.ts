@@ -3,6 +3,8 @@ import { htmlToExcerpt } from "../../utils/sanitizeHtml.js";
 
 type AuthorRow = { id: number; nickname: string; parent_id: number | null };
 
+export type NewsChannel = "company" | "warehouse" | "patch";
+
 export type NewsAuthor = {
   id: number;
   nickname: string;
@@ -12,6 +14,7 @@ export type NewsPostListItem = {
   id: number;
   title: string;
   excerpt: string;
+  channel: NewsChannel;
   author: NewsAuthor;
   created_at: string;
   updated_at: string;
@@ -29,6 +32,7 @@ export type NewsPostDetail = {
   id: number;
   title: string;
   body_html: string;
+  channel: NewsChannel;
   author: NewsAuthor;
   author_id: number;
   created_at: string;
@@ -43,13 +47,22 @@ function mapAuthor(row: AuthorRow | undefined): NewsAuthor {
   return { id: row.id, nickname: row.nickname };
 }
 
-export function listNewsPosts(viewerId: number): NewsPostListItem[] {
+function normalizeChannel(value: string | null | undefined): NewsChannel {
+  if (value === "warehouse" || value === "patch" || value === "company") return value;
+  return "company";
+}
+
+export function listNewsPosts(
+  viewerId: number,
+  channel: NewsChannel
+): NewsPostListItem[] {
   const rows = getDb()
     .prepare(
       `SELECT
          p.id,
          p.title,
          p.body_html,
+         p.channel,
          p.author_id,
          p.created_at,
          p.updated_at,
@@ -63,12 +76,14 @@ export function listNewsPosts(viewerId: number): NewsPostListItem[] {
          ) AS read_by_me
        FROM news_posts p
        LEFT JOIN users u ON u.id = p.author_id
+       WHERE p.channel = ?
        ORDER BY p.created_at DESC, p.id DESC`
     )
-    .all(viewerId) as Array<{
+    .all(viewerId, channel) as Array<{
     id: number;
     title: string;
     body_html: string;
+    channel: string;
     author_id: number;
     created_at: string;
     updated_at: string;
@@ -83,6 +98,7 @@ export function listNewsPosts(viewerId: number): NewsPostListItem[] {
     id: row.id,
     title: row.title,
     excerpt: htmlToExcerpt(row.body_html),
+    channel: normalizeChannel(row.channel),
     author: mapAuthor(
       row.uid != null
         ? { id: row.uid, nickname: row.nickname ?? "—", parent_id: row.parent_id }
@@ -99,13 +115,14 @@ export function getNewsPost(id: number): {
   id: number;
   title: string;
   body_html: string;
+  channel: NewsChannel;
   author_id: number;
   created_at: string;
   updated_at: string;
 } | null {
   const row = getDb()
     .prepare(
-      `SELECT id, title, body_html, author_id, created_at, updated_at
+      `SELECT id, title, body_html, channel, author_id, created_at, updated_at
        FROM news_posts WHERE id = ?`
     )
     .get(id) as
@@ -113,12 +130,14 @@ export function getNewsPost(id: number): {
         id: number;
         title: string;
         body_html: string;
+        channel: string;
         author_id: number;
         created_at: string;
         updated_at: string;
       }
     | undefined;
-  return row ?? null;
+  if (!row) return null;
+  return { ...row, channel: normalizeChannel(row.channel) };
 }
 
 export function listNewsReaders(postId: number): NewsReader[] {
@@ -159,6 +178,7 @@ export function getNewsPostDetail(
     id: post.id,
     title: post.title,
     body_html: post.body_html,
+    channel: post.channel,
     author: mapAuthor(authorRow),
     author_id: post.author_id,
     created_at: post.created_at,
@@ -173,13 +193,14 @@ export function createNewsPost(data: {
   title: string;
   body_html: string;
   author_id: number;
+  channel: NewsChannel;
 }): NewsPostDetail {
   const result = getDb()
     .prepare(
-      `INSERT INTO news_posts (title, body_html, author_id)
-       VALUES (?, ?, ?)`
+      `INSERT INTO news_posts (title, body_html, author_id, channel)
+       VALUES (?, ?, ?, ?)`
     )
-    .run(data.title, data.body_html, data.author_id);
+    .run(data.title, data.body_html, data.author_id, data.channel);
 
   const id = Number(result.lastInsertRowid);
   markNewsRead(id, data.author_id);

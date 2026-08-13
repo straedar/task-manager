@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Check, Pencil, Play, Trash2, Users, X } from "lucide-react";
+import { DiscussionIcon } from "./DiscussionIcon";
 import type { Task } from "../types";
 import { PRIORITY_LABELS, STATUS_LABELS } from "../types";
 import { formatTaskDate, formatMoscowDeadline, parseTaskDate } from "../utils/date";
@@ -59,6 +61,7 @@ export function TaskCard({
   onUpdated,
   actingId,
 }: TaskCardProps) {
+  const navigate = useNavigate();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const isAssignee = task.assignees.some((a) => a.id === currentUserId);
@@ -90,13 +93,26 @@ export function TaskCard({
   return (
     <>
       <div
-        className={`relative rounded-3xl p-3.5 shadow-soft ${
+        role="link"
+        tabIndex={0}
+        onClick={() => navigate(`/tasks/t/${task.id}`)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            navigate(`/tasks/t/${task.id}`);
+          }
+        }}
+        className={`relative cursor-pointer rounded-3xl p-3.5 shadow-soft transition hover:-translate-y-0.5 hover:shadow-md ${
           overdue ? "card-accent-alert" : "bg-white"
         }`}
       >
         {canStart && (
           <button
-            onClick={() => onStart(task.id)}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onStart(task.id);
+            }}
             disabled={actingId === task.id}
             className={`${checkBtn} absolute right-3 top-3 z-10 bg-blue-500 text-white hover:bg-blue-600`}
             aria-label="В работу"
@@ -107,7 +123,11 @@ export function TaskCard({
         )}
         {canComplete && (
           <button
-            onClick={() => onComplete(task.id)}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onComplete(task.id);
+            }}
             disabled={actingId === task.id}
             className={`${checkBtn} absolute right-3 top-3 z-10 bg-gray-900 text-white hover:bg-gray-800`}
             aria-label="Завершить"
@@ -135,9 +155,12 @@ export function TaskCard({
         )}
 
         <div className={`min-w-0 ${hasCornerAction ? "pr-12" : ""}`}>
-          <h3 className="break-words text-[15px] font-semibold leading-snug text-gray-900">
-            {task.title}
-          </h3>
+          <div className="flex items-start gap-2">
+            <h3 className="min-w-0 flex-1 break-words text-[15px] font-semibold leading-snug text-gray-900">
+              {task.title}
+            </h3>
+            <DiscussionIcon chat={task.chat} className="mt-0.5 h-4 w-4" />
+          </div>
           <div className="mt-1 flex flex-wrap gap-1">
             {failedByDeadline ? (
               <span className="badge-accent-alert rounded-full px-2 py-0.5 text-[11px] font-medium">
@@ -234,7 +257,11 @@ export function TaskCard({
             <div className="flex shrink-0 items-center gap-1">
               {canEdit && (
                 <button
-                  onClick={() => setEditOpen(true)}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditOpen(true);
+                  }}
                   disabled={actingId === task.id}
                   className={`${actionBtn} bg-orange-50 text-orange-500 hover:bg-orange-100`}
                   aria-label="Изменить"
@@ -245,7 +272,11 @@ export function TaskCard({
               )}
               {canDelete && (
                 <button
-                  onClick={handleDelete}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete();
+                  }}
                   disabled={actingId === task.id}
                   className={`${actionBtn} bg-red-50 text-red-500 hover:bg-red-100`}
                   aria-label="Удалить"

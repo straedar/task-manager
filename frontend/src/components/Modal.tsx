@@ -44,7 +44,7 @@ export function Modal({
       />
 
       <div
-        className={`relative flex max-h-[92dvh] w-full max-w-full flex-col overflow-hidden rounded-t-3xl bg-[var(--surface)] shadow-soft ${maxWidth} sm:rounded-3xl`}
+        className={`relative flex max-h-[min(92dvh,100%)] w-full max-w-full flex-col overflow-hidden rounded-t-3xl bg-[var(--surface)] shadow-soft ${maxWidth} sm:rounded-3xl`}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-5 py-4">
           <h2 id="modal-title" className="text-lg font-semibold text-[var(--text-primary)]">
@@ -60,7 +60,9 @@ export function Modal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div className="pb-[max(1.25rem,env(safe-area-inset-bottom))]">{children}</div>
+        </div>
       </div>
     </div>,
     document.body

@@ -92,7 +92,11 @@ export function createTask(data: {
   const db = getDb();
   const planned_for = data.planned_for ?? null;
   const due_at =
-    data.due_at ?? (planned_for ? new Date(`${planned_for}T12:00:00+03:00`).toISOString() : null);
+    data.due_at !== undefined
+      ? data.due_at
+      : planned_for
+        ? new Date(`${planned_for}T12:00:00+03:00`).toISOString()
+        : null;
   const is_private = data.is_private ? 1 : 0;
 
   const taskId = runTransaction(() => {
@@ -174,6 +178,29 @@ export function startTask(taskId: number): TaskWithAssignees | null {
   return getTaskById(taskId) ?? null;
 }
 
+/** Вернуть проваленную по сроку задачу в «Ожидает». */
+export function restoreTask(taskId: number): TaskWithAssignees | null {
+  const db = getDb();
+  const task = getTaskById(taskId);
+  if (!task || task.status !== "completed" || !task.auto_completed) return null;
+
+  runTransaction(() => {
+    db.prepare(
+      `UPDATE tasks
+       SET status = 'pending',
+           completed_at = NULL,
+           completed_by = NULL,
+           auto_completed = 0
+       WHERE id = ? AND status = 'completed' AND auto_completed = 1`
+    ).run(taskId);
+    db.prepare(
+      `UPDATE task_assignees SET completed_at = NULL WHERE task_id = ?`
+    ).run(taskId);
+  });
+
+  return getTaskById(taskId) ?? null;
+}
+
 export function updateTask(
   taskId: number,
   data: {
@@ -196,12 +223,9 @@ export function updateTask(
   );
   const planned_for =
     data.planned_for !== undefined ? data.planned_for : existing.planned_for;
+  // Keep existing deadline unless explicitly updated — never rewrite from planned_for.
   const dueAt =
-    data.due_at !== undefined
-      ? data.due_at
-      : planned_for
-        ? new Date(`${planned_for}T12:00:00+03:00`).toISOString()
-        : existing.due_at;
+    data.due_at !== undefined ? data.due_at : existing.due_at;
   const is_private = data.is_private ? 1 : 0;
 
   runTransaction(() => {

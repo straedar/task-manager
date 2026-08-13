@@ -12,15 +12,17 @@ export type ReferenceProduct = {
 
 export type ProductLabelKind = "name" | "tag";
 
-/** Product linked to a component with chosen card label. */
+/** Product linked to a component with chosen card label and BOM quantity. */
 export type ReferenceComponentProduct = ReferenceProduct & {
   display_as: ProductLabelKind;
   label: string;
+  quantity: number;
 };
 
 export type ComponentProductLink = {
   product_id: number;
   display_as: ProductLabelKind;
+  quantity?: number;
 };
 
 /** Kit type tag (болт, шуруп, …). */
@@ -42,6 +44,14 @@ export type ReferenceComponent = {
   type: ReferenceTag | null;
   /** Finished products linked to this component (label = name or short tag). */
   products: ReferenceComponentProduct[];
+  /** BOM quantity when listed under a specific product. */
+  quantity?: number;
+};
+
+export type ProductBomItem = {
+  component_id: number;
+  quantity: number;
+  display_as?: ProductLabelKind;
 };
 
 const PRODUCT_COLS = `id, name, tag, created_by, created_at, updated_at`;
@@ -51,6 +61,11 @@ function mapProduct(row: ReferenceProduct): ReferenceProduct {
     ...row,
     tag: row.tag?.trim() ? row.tag : row.name,
   };
+}
+
+function clampQuantity(value: number | undefined | null): number {
+  if (value == null || !Number.isFinite(value)) return 1;
+  return Math.max(1, Math.min(99999, Math.round(value)));
 }
 
 export function listProducts(q = ""): ReferenceProduct[] {
@@ -247,19 +262,20 @@ function productsForComponent(componentId: number): ReferenceComponentProduct[] 
   const rows = getDb()
     .prepare(
       `SELECT p.id, p.name, p.tag, p.created_by, p.created_at, p.updated_at,
-              COALESCE(NULLIF(cp.display_as, ''), 'tag') AS display_as
+              COALESCE(NULLIF(cp.display_as, ''), 'tag') AS display_as,
+              COALESCE(cp.quantity, 1) AS quantity
        FROM reference_products p
        INNER JOIN reference_component_products cp ON cp.product_id = p.id
        WHERE cp.component_id = ?
        ORDER BY p.tag COLLATE NOCASE ASC, p.name COLLATE NOCASE ASC`
     )
-    .all(componentId) as (ReferenceProduct & { display_as: string })[];
+    .all(componentId) as (ReferenceProduct & { display_as: string; quantity: number })[];
 
   return rows.map((row) => {
     const product = mapProduct(row);
     const display_as: ProductLabelKind = row.display_as === "name" ? "name" : "tag";
     const label = display_as === "name" ? product.name : product.tag;
-    return { ...product, display_as, label };
+    return { ...product, display_as, label, quantity: clampQuantity(row.quantity) };
   });
 }
 
@@ -271,19 +287,74 @@ function hydrateComponent(
     created_by: number;
     created_at: string;
     updated_at: string;
-  }
+  },
+  bomQuantity?: number
 ): ReferenceComponent {
   const type = row.type_id != null ? getTag(row.type_id) : null;
   return {
     ...row,
     type,
     products: productsForComponent(row.id),
+    ...(bomQuantity != null ? { quantity: clampQuantity(bomQuantity) } : {}),
   };
 }
 
-export function listComponents(q = ""): ReferenceComponent[] {
-  const query = q.trim();
-  let rows: {
+export type ListComponentsFilters = {
+  q?: string;
+  type_id?: number | null;
+  product_id?: number | null;
+};
+
+export function listComponents(filters: ListComponentsFilters | string = {}): ReferenceComponent[] {
+  const opts: ListComponentsFilters =
+    typeof filters === "string" ? { q: filters } : filters ?? {};
+  const query = (opts.q ?? "").trim();
+  const typeId =
+    opts.type_id != null && Number.isFinite(opts.type_id) && opts.type_id > 0
+      ? opts.type_id
+      : null;
+  const productId =
+    opts.product_id != null && Number.isFinite(opts.product_id) && opts.product_id > 0
+      ? opts.product_id
+      : null;
+
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+
+  if (query) {
+    const like = `%${query}%`;
+    where.push(`(
+      c.name LIKE ? COLLATE NOCASE
+      OR t.name LIKE ? COLLATE NOCASE
+      OR c.id IN (
+        SELECT cp.component_id FROM reference_component_products cp
+        INNER JOIN reference_products p ON p.id = cp.product_id
+        WHERE p.name LIKE ? COLLATE NOCASE
+           OR p.tag LIKE ? COLLATE NOCASE
+      )
+    )`);
+    params.push(like, like, like, like);
+  }
+  if (typeId != null) {
+    where.push(`c.type_id = ?`);
+    params.push(typeId);
+  }
+  if (productId != null) {
+    where.push(`c.id IN (
+      SELECT cp.component_id FROM reference_component_products cp WHERE cp.product_id = ?
+    )`);
+    params.push(productId);
+  }
+
+  const sql = `
+    SELECT c.id, c.name, c.type_id, c.created_by, c.created_at, c.updated_at
+    FROM reference_components c
+    LEFT JOIN reference_tags t ON t.id = c.type_id
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+    ORDER BY c.name COLLATE NOCASE ASC, c.id ASC
+  `;
+
+  const rows = getDb().prepare(sql).all(...params) as {
     id: number;
     name: string;
     type_id: number | null;
@@ -291,40 +362,14 @@ export function listComponents(q = ""): ReferenceComponent[] {
     created_at: string;
     updated_at: string;
   }[];
-  if (query) {
-    const like = `%${query}%`;
-    rows = getDb()
-      .prepare(
-        `SELECT c.id, c.name, c.type_id, c.created_by, c.created_at, c.updated_at
-         FROM reference_components c
-         LEFT JOIN reference_tags t ON t.id = c.type_id
-         WHERE c.name LIKE ? COLLATE NOCASE
-            OR t.name LIKE ? COLLATE NOCASE
-            OR c.id IN (
-              SELECT cp.component_id FROM reference_component_products cp
-              INNER JOIN reference_products p ON p.id = cp.product_id
-              WHERE p.name LIKE ? COLLATE NOCASE
-                 OR p.tag LIKE ? COLLATE NOCASE
-            )
-         ORDER BY c.name COLLATE NOCASE ASC, c.id ASC`
-      )
-      .all(like, like, like, like) as typeof rows;
-  } else {
-    rows = getDb()
-      .prepare(
-        `SELECT id, name, type_id, created_by, created_at, updated_at
-         FROM reference_components
-         ORDER BY name COLLATE NOCASE ASC, id ASC`
-      )
-      .all() as typeof rows;
-  }
-  return rows.map(hydrateComponent);
+  return rows.map((row) => hydrateComponent(row));
 }
 
 export function listComponentsByProduct(productId: number): ReferenceComponent[] {
   const rows = getDb()
     .prepare(
-      `SELECT c.id, c.name, c.type_id, c.created_by, c.created_at, c.updated_at
+      `SELECT c.id, c.name, c.type_id, c.created_by, c.created_at, c.updated_at,
+              COALESCE(cp.quantity, 1) AS quantity
        FROM reference_components c
        INNER JOIN reference_component_products cp ON cp.component_id = c.id
        WHERE cp.product_id = ?
@@ -337,8 +382,11 @@ export function listComponentsByProduct(productId: number): ReferenceComponent[]
     created_by: number;
     created_at: string;
     updated_at: string;
+    quantity: number;
   }[];
-  return rows.map(hydrateComponent);
+  return rows.map((row) =>
+    hydrateComponent(row, row.quantity)
+  );
 }
 
 export function getComponent(id: number): ReferenceComponent | null {
@@ -365,8 +413,8 @@ function setComponentProducts(componentId: number, links: ComponentProductLink[]
   const db = getDb();
   db.prepare(`DELETE FROM reference_component_products WHERE component_id = ?`).run(componentId);
   const insert = db.prepare(
-    `INSERT OR IGNORE INTO reference_component_products (component_id, product_id, display_as)
-     VALUES (?, ?, ?)`
+    `INSERT OR IGNORE INTO reference_component_products (component_id, product_id, display_as, quantity)
+     VALUES (?, ?, ?, ?)`
   );
   const seen = new Set<number>();
   for (const link of links) {
@@ -376,8 +424,58 @@ function setComponentProducts(componentId: number, links: ComponentProductLink[]
     const exists = db.prepare(`SELECT id FROM reference_products WHERE id = ?`).get(productId);
     if (!exists) continue;
     seen.add(productId);
-    insert.run(componentId, productId, displayAs);
+    insert.run(componentId, productId, displayAs, clampQuantity(link.quantity));
   }
+}
+
+/** Replace full BOM for a finished product (keeps display_as when re-linking same component). */
+export function setProductComponents(
+  productId: number,
+  items: ProductBomItem[]
+): ReferenceComponent[] | null {
+  if (!getProduct(productId)) return null;
+
+  return runTransaction(() => {
+    const db = getDb();
+    const prevRows = db
+      .prepare(
+        `SELECT component_id, display_as FROM reference_component_products WHERE product_id = ?`
+      )
+      .all(productId) as { component_id: number; display_as: string }[];
+    const prevDisplay = new Map(
+      prevRows.map((r) => [
+        r.component_id,
+        (r.display_as === "name" ? "name" : "tag") as ProductLabelKind,
+      ])
+    );
+
+    db.prepare(`DELETE FROM reference_component_products WHERE product_id = ?`).run(productId);
+    const insert = db.prepare(
+      `INSERT INTO reference_component_products (component_id, product_id, display_as, quantity)
+       VALUES (?, ?, ?, ?)`
+    );
+    const seen = new Set<number>();
+    for (const item of items) {
+      const componentId = item.component_id;
+      if (!Number.isFinite(componentId) || componentId <= 0 || seen.has(componentId)) continue;
+      const exists = db
+        .prepare(`SELECT id FROM reference_components WHERE id = ?`)
+        .get(componentId);
+      if (!exists) continue;
+      seen.add(componentId);
+      const displayAs: ProductLabelKind =
+        item.display_as === "name" || item.display_as === "tag"
+          ? item.display_as
+          : prevDisplay.get(componentId) ?? "tag";
+      insert.run(componentId, productId, displayAs, clampQuantity(item.quantity));
+    }
+
+    db.prepare(
+      `UPDATE reference_products SET updated_at = datetime('now') WHERE id = ?`
+    ).run(productId);
+
+    return listComponentsByProduct(productId);
+  });
 }
 
 function resolveTypeId(
@@ -403,11 +501,13 @@ function normalizeProductLinks(
     return product_links.map((l) => ({
       product_id: l.product_id,
       display_as: l.display_as === "name" ? "name" : "tag",
+      quantity: clampQuantity(l.quantity),
     }));
   }
   return (product_ids ?? []).map((product_id) => ({
     product_id,
     display_as: "tag" as const,
+    quantity: 1,
   }));
 }
 

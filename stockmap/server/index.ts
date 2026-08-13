@@ -15,6 +15,22 @@ const db = new DatabaseSync(join(dataDir, "stockmap.db"));
 db.exec("PRAGMA journal_mode = WAL;");
 db.exec("PRAGMA foreign_keys = ON;");
 
+function withTransaction<T>(fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = fn();
+    db.exec("COMMIT");
+    return result;
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS map_objects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +66,85 @@ db.prepare(
   `UPDATE map_objects SET rack_theme = 'black' WHERE type = 'rack' AND rack_theme = 'orange'`,
 ).run();
 
+// Расширить CHECK type: pallet / zone / window
+{
+  const createSql = (
+    db
+      .prepare(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'map_objects'`,
+      )
+      .get() as { sql: string } | undefined
+  )?.sql;
+
+  let windowTypeAllowed = false;
+  try {
+    const probe = db.prepare(`
+      INSERT INTO map_objects (
+        type, label, x, y, width, height, shelves_count, rotation, frame_width, rack_theme
+      ) VALUES ('window', '__type_probe__', -99999, -99999, 40, 24, NULL, 0, NULL, 'blue')
+    `);
+    probe.run();
+    db.prepare(`DELETE FROM map_objects WHERE label = '__type_probe__'`).run();
+    windowTypeAllowed = true;
+  } catch {
+    windowTypeAllowed = false;
+  }
+
+  const needsTypeExpand =
+    !windowTypeAllowed ||
+    (!!createSql &&
+      (!createSql.includes("'pallet'") ||
+        !createSql.includes("'zone'") ||
+        !createSql.includes("'window'")));
+
+  if (needsTypeExpand) {
+    db.exec(`
+      CREATE TABLE map_objects_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL CHECK (type IN ('rack', 'pallet', 'zone', 'wall', 'window', 'door', 'table', 'chair')),
+        label TEXT NOT NULL DEFAULT '',
+        x REAL NOT NULL,
+        y REAL NOT NULL,
+        width REAL NOT NULL,
+        height REAL NOT NULL,
+        shelves_count INTEGER,
+        rotation REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        frame_width REAL,
+        rack_theme TEXT NOT NULL DEFAULT 'blue'
+      );
+      INSERT INTO map_objects_new (
+        id, type, label, x, y, width, height, shelves_count, rotation, created_at, frame_width, rack_theme
+      )
+      SELECT
+        id, type, label, x, y, width, height, shelves_count, rotation, created_at, frame_width,
+        COALESCE(rack_theme, 'blue')
+      FROM map_objects;
+      DROP TABLE map_objects;
+      ALTER TABLE map_objects_new RENAME TO map_objects;
+    `);
+  }
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pallet_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pallet_id INTEGER NOT NULL REFERENCES map_objects(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT '',
+    details TEXT NOT NULL DEFAULT '',
+    quantity TEXT NOT NULL DEFAULT '',
+    kind TEXT,
+    ref_id INTEGER,
+    name_snapshot TEXT NOT NULL DEFAULT '',
+    type_snapshot TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+db.exec(
+  `CREATE INDEX IF NOT EXISTS idx_pallet_items_pallet ON pallet_items(pallet_id, sort_order)`,
+);
+
 // Миграция со старой таблицы bookshelves
 const hasOld = db
   .prepare(
@@ -70,7 +165,15 @@ if (hasOld) {
   }
 }
 
-type ObjectType = "rack" | "wall" | "door" | "table" | "chair";
+type ObjectType =
+  | "rack"
+  | "pallet"
+  | "zone"
+  | "wall"
+  | "window"
+  | "door"
+  | "table"
+  | "chair";
 type RackTheme = "blue" | "black";
 
 type ObjectRow = {
@@ -126,17 +229,28 @@ function mapObject(row: ObjectRow) {
   };
 }
 
-const TYPES = new Set<ObjectType>(["rack", "wall", "door", "table", "chair"]);
+const TYPES = new Set<ObjectType>([
+  "rack",
+  "pallet",
+  "zone",
+  "wall",
+  "window",
+  "door",
+  "table",
+  "chair",
+]);
 
 function minSizeFor(type: ObjectType) {
   switch (type) {
     case "wall":
+    case "window":
     case "door":
       return { minSide: 6, minLong: 24 };
     case "chair":
       return { minSide: 18, minLong: 18 };
     case "table":
-      return { minSide: 24, minLong: 24 };
+    case "zone":
+    case "pallet":
     case "rack":
     default:
       return { minSide: 50, minLong: 50 };
@@ -290,7 +404,7 @@ app.post<{
       : null;
 
   const rackTheme =
-    type === "rack" ? normalizeRackTheme(body.rackTheme) : null;
+    type === "rack" ? normalizeRackTheme(body.rackTheme) : "blue";
 
   const result = insertStmt.run(
     type,
@@ -366,7 +480,7 @@ app.patch<{
         ? body.rackTheme !== undefined
           ? normalizeRackTheme(body.rackTheme, normalizeRackTheme(existing.rack_theme))
           : normalizeRackTheme(existing.rack_theme)
-        : null,
+        : "blue",
   };
 
   if (!validSize(existing.type, next.width, next.height)) {
@@ -382,6 +496,11 @@ app.patch<{
     return reply.code(400).send({ error: "Некорректное число полок" });
   }
 
+  const prevShelves =
+    existing.type === "rack" ? (existing.shelves_count ?? 0) : 0;
+  const nextShelves =
+    existing.type === "rack" ? (next.shelvesCount ?? 0) : 0;
+
   updateStmt.run(
     next.label,
     next.x,
@@ -394,6 +513,13 @@ app.patch<{
     next.rackTheme,
     id,
   );
+
+  // Уменьшили число полок — убрать объекты с исчезнувших уровней (и старой крыши).
+  if (existing.type === "rack" && nextShelves < prevShelves) {
+    db.prepare(
+      `DELETE FROM shelf_items WHERE rack_id = ? AND shelf_index > ?`,
+    ).run(id, nextShelves);
+  }
 
   const row = getStmt.get(id) as ObjectRow;
   return mapObject(row);
@@ -824,6 +950,223 @@ app.get<{ Params: { id: string } }>(
   },
 );
 
+app.put<{
+  Params: { id: string };
+  Body: {
+    items?: Array<{
+      id?: number;
+      shelfIndex?: number;
+      type?: ShelfItemType;
+      widthRatio?: number;
+      posX?: number;
+      depthRow?: number;
+      stackOrder?: number;
+      title?: string;
+      details?: string;
+      quantity?: string;
+      contents?: Array<{
+        kind?: string;
+        refId?: number;
+        nameSnapshot?: string;
+        typeSnapshot?: string;
+        quantity?: string;
+      }>;
+    }>;
+  };
+}>("/api/racks/:id/items/replace", async (request, reply) => {
+  const rackId = Number(request.params.id);
+  if (!Number.isInteger(rackId)) {
+    return reply.code(400).send({ error: "Некорректный id" });
+  }
+  const rack = getStmt.get(rackId) as ObjectRow | undefined;
+  if (!rack || rack.type !== "rack") {
+    return reply.code(404).send({ error: "Стеллаж не найден" });
+  }
+
+  const raw = Array.isArray(request.body?.items) ? request.body.items : [];
+  if (raw.length > 500) {
+    return reply.code(400).send({ error: "Слишком много объектов" });
+  }
+
+  const maxShelfInclusive = (rack.shelves_count ?? 0) + 1;
+  type Norm = {
+    keepId: number | null;
+    shelfIndex: number;
+    type: ShelfItemType;
+    widthRatio: number;
+    posX: number;
+    depthRow: number;
+    stackOrder: number;
+    title: string;
+    details: string;
+    quantity: string;
+    contents: Array<{
+      kind: ContentKind;
+      refId: number;
+      nameSnapshot: string;
+      typeSnapshot: string;
+      quantity: string;
+    }>;
+  };
+
+  const normalized: Norm[] = [];
+  for (const entry of raw) {
+    const type = entry?.type;
+    const shelfIndex = Number(entry?.shelfIndex);
+    if (!ITEM_TYPES.has(type as ShelfItemType)) {
+      return reply.code(400).send({ error: "Некорректный тип сущности" });
+    }
+    if (
+      !Number.isInteger(shelfIndex) ||
+      shelfIndex < 1 ||
+      shelfIndex > maxShelfInclusive
+    ) {
+      return reply.code(400).send({ error: "Некорректный номер полки" });
+    }
+    const keepId =
+      typeof entry?.id === "number" &&
+      Number.isInteger(entry.id) &&
+      entry.id > 0
+        ? entry.id
+        : null;
+    const contentsRaw = Array.isArray(entry?.contents) ? entry.contents : [];
+    const contents: Norm["contents"] = [];
+    const seen = new Set<string>();
+    for (const c of contentsRaw) {
+      if (c?.kind !== "component" && c?.kind !== "product") continue;
+      const refId = Number(c.refId);
+      if (!Number.isInteger(refId) || refId <= 0) continue;
+      const nameSnapshot =
+        typeof c.nameSnapshot === "string" ? c.nameSnapshot.trim() : "";
+      if (!nameSnapshot) continue;
+      const key = `${c.kind}:${refId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      contents.push({
+        kind: c.kind,
+        refId,
+        nameSnapshot: nameSnapshot.slice(0, 200),
+        typeSnapshot:
+          typeof c.typeSnapshot === "string"
+            ? c.typeSnapshot.trim().slice(0, 120)
+            : "",
+        quantity:
+          typeof c.quantity === "string" ? c.quantity.trim().slice(0, 80) : "",
+      });
+    }
+    normalized.push({
+      keepId,
+      shelfIndex,
+      type: type as ShelfItemType,
+      widthRatio: clampWidthRatio(
+        typeof entry?.widthRatio === "number" ? entry.widthRatio : 1,
+        type as ShelfItemType,
+      ),
+      posX: clampPosX(typeof entry?.posX === "number" ? entry.posX : 0),
+      depthRow: clampDepthRow(
+        typeof entry?.depthRow === "number" ? entry.depthRow : 1,
+      ),
+      stackOrder: clampStackOrder(
+        typeof entry?.stackOrder === "number" ? entry.stackOrder : 0,
+      ),
+      title: typeof entry?.title === "string" ? entry.title.trim().slice(0, 200) : "",
+      details:
+        typeof entry?.details === "string" ? entry.details.trim().slice(0, 2000) : "",
+      quantity:
+        typeof entry?.quantity === "string" ? entry.quantity.trim().slice(0, 80) : "",
+      contents,
+    });
+  }
+
+  const insertFullStmt = db.prepare(`
+    INSERT INTO shelf_items (
+      rack_id, shelf_index, type, width_ratio, pos_x, depth_row, stack_order,
+      title, details, quantity, info_updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    const existing = listItemsStmt.all(rackId) as ShelfItemRow[];
+    const keepIds = new Set(
+      normalized.map((n) => n.keepId).filter((id): id is number => id != null),
+    );
+    for (const row of existing) {
+      if (!keepIds.has(row.id)) {
+        deleteContentsForItemStmt.run(row.id);
+        deleteItemStmt.run(row.id);
+      }
+    }
+    for (const n of normalized) {
+      let itemId = n.keepId;
+      const infoAt =
+        n.title || n.details || n.quantity || n.contents.length > 0
+          ? nowIso()
+          : null;
+      if (itemId != null) {
+        const row = getItemStmt.get(itemId) as ShelfItemRow | undefined;
+        if (!row || row.rack_id !== rackId) {
+          throw new Error("Некорректный id сущности");
+        }
+        updateItemStmt.run(
+          n.widthRatio,
+          n.posX,
+          n.shelfIndex,
+          n.depthRow,
+          n.stackOrder,
+          n.title,
+          n.details,
+          n.quantity,
+          infoAt,
+          itemId,
+        );
+      } else {
+        const result = insertFullStmt.run(
+          rackId,
+          n.shelfIndex,
+          n.type,
+          n.widthRatio,
+          n.posX,
+          n.depthRow,
+          n.stackOrder,
+          n.title,
+          n.details,
+          n.quantity,
+          infoAt,
+        );
+        itemId = Number(result.lastInsertRowid);
+      }
+      deleteContentsForItemStmt.run(itemId);
+      for (const c of n.contents) {
+        insertContentStmt.run(
+          itemId,
+          c.kind,
+          c.refId,
+          c.nameSnapshot,
+          c.typeSnapshot,
+          c.quantity,
+        );
+      }
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    return reply
+      .code(400)
+      .send({
+        error: err instanceof Error ? err.message : "Не удалось сохранить",
+      });
+  }
+
+  const rows = listItemsStmt.all(rackId) as ShelfItemRow[];
+  const byId = contentsByItemIds(rows.map((r) => r.id));
+  return rows.map((row) => mapShelfItem(row, byId.get(row.id) ?? []));
+});
+
 app.post<{
   Params: { id: string };
   Body: {
@@ -897,11 +1240,40 @@ app.post<{
     nextStackOrder = clampStackOrder(maxOrder + 1);
   } else if (typeof posX === "number" && Number.isFinite(posX)) {
     nextPos = clampPosX(posX);
+    const countAtPos = (
+      stackCountStmt.get(rackId, shelfIndex, nextDepth, nextPos) as {
+        n: number;
+      }
+    ).n;
+    // Нельзя создать 5-ю коробку «в ту же точку» без stackOntoId
+    if (countAtPos > 0) {
+      nextPos = allocateFreePosX(
+        rackId,
+        shelfIndex,
+        nextDepth,
+        nextPos,
+        -1,
+      );
+    }
   } else {
     const maxRow = maxPosStmt.get(rackId, shelfIndex, nextDepth) as {
       max_pos: number;
     };
     nextPos = clampPosX(maxRow.max_pos + 90);
+    const countAtPos = (
+      stackCountStmt.get(rackId, shelfIndex, nextDepth, nextPos) as {
+        n: number;
+      }
+    ).n;
+    if (countAtPos > 0) {
+      nextPos = allocateFreePosX(
+        rackId,
+        shelfIndex,
+        nextDepth,
+        nextPos,
+        -1,
+      );
+    }
   }
 
   const result = insertItemStmt.run(
@@ -1100,6 +1472,30 @@ app.patch<{
         ) as { id: number }[]
     ).map((r) => r.id);
 
+    const siblingSet = new Set(siblings);
+    const atTarget = (
+      db
+        .prepare(
+          `SELECT id FROM shelf_items
+           WHERE rack_id = ? AND shelf_index = ? AND depth_row = ?
+             AND pos_x = ?`,
+        )
+        .all(existing.rack_id, nextShelf, nextDepth, nextPos) as { id: number }[]
+    ).map((r) => r.id);
+    const foreignAtTarget = atTarget.filter((tid) => !siblingSet.has(tid));
+
+    // Слияние столбцов только через stackOntoId; иначе — свободная ячейка
+    let movePos = nextPos;
+    if (foreignAtTarget.length > 0) {
+      movePos = allocateFreePosX(
+        existing.rack_id,
+        nextShelf,
+        nextDepth,
+        nextPos,
+        existing.id,
+      );
+    }
+
     const move = db.prepare(
       `UPDATE shelf_items
        SET pos_x = ?, shelf_index = ?, depth_row = ?, width_ratio = COALESCE(?, width_ratio)
@@ -1107,7 +1503,7 @@ app.patch<{
     );
     for (const sibId of siblings) {
       move.run(
-        nextPos,
+        movePos,
         nextShelf,
         nextDepth,
         body.widthRatio !== undefined ? nextWidth : null,
@@ -1118,7 +1514,7 @@ app.patch<{
     if (hasInfoPatch || body.stackOrder !== undefined) {
       updateItemStmt.run(
         nextWidth,
-        nextPos,
+        movePos,
         nextShelf,
         nextDepth,
         nextStackOrder,
@@ -1464,8 +1860,14 @@ function defaultLabel(type: ObjectType) {
   switch (type) {
     case "rack":
       return "Стеллаж";
+    case "pallet":
+      return "Паллет";
+    case "zone":
+      return "Зона";
     case "wall":
       return "Стена";
+    case "window":
+      return "Окно";
     case "door":
       return "Дверь";
     case "table":
@@ -1474,6 +1876,125 @@ function defaultLabel(type: ObjectType) {
       return "Стул";
   }
 }
+
+type PalletItemRow = {
+  id: number;
+  pallet_id: number;
+  title: string;
+  details: string;
+  quantity: string;
+  kind: string | null;
+  ref_id: number | null;
+  name_snapshot: string;
+  type_snapshot: string;
+  sort_order: number;
+};
+
+function mapPalletItem(row: PalletItemRow) {
+  return {
+    id: row.id,
+    palletId: row.pallet_id,
+    title: row.title ?? "",
+    details: row.details ?? "",
+    quantity: row.quantity ?? "",
+    kind: row.kind === "product" || row.kind === "component" ? row.kind : null,
+    refId: row.ref_id,
+    nameSnapshot: row.name_snapshot ?? "",
+    typeSnapshot: row.type_snapshot ?? "",
+    sortOrder: row.sort_order ?? 0,
+  };
+}
+
+app.get<{ Params: { id: string } }>(
+  "/api/pallets/:id/items",
+  async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return reply.code(400).send({ error: "Неверный ID" });
+    }
+    const obj = getStmt.get(id) as ObjectRow | undefined;
+    if (!obj || obj.type !== "pallet") {
+      return reply.code(404).send({ error: "Паллет не найден" });
+    }
+    const rows = db
+      .prepare(
+        `SELECT * FROM pallet_items WHERE pallet_id = ? ORDER BY sort_order ASC, id ASC`,
+      )
+      .all(id) as PalletItemRow[];
+    return { items: rows.map(mapPalletItem) };
+  },
+);
+
+app.put<{
+  Params: { id: string };
+  Body: {
+    items?: Array<{
+      title?: string;
+      details?: string;
+      quantity?: string;
+      kind?: "component" | "product" | null;
+      refId?: number | null;
+      nameSnapshot?: string;
+      typeSnapshot?: string;
+    }>;
+  };
+}>("/api/pallets/:id/items", async (request, reply) => {
+  const id = Number(request.params.id);
+  if (!Number.isInteger(id) || id < 1) {
+    return reply.code(400).send({ error: "Неверный ID" });
+  }
+  const obj = getStmt.get(id) as ObjectRow | undefined;
+  if (!obj || obj.type !== "pallet") {
+    return reply.code(404).send({ error: "Паллет не найден" });
+  }
+  const items = Array.isArray(request.body?.items) ? request.body.items : [];
+  if (items.length > 100) {
+    return reply.code(400).send({ error: "Слишком много позиций" });
+  }
+
+  const del = db.prepare(`DELETE FROM pallet_items WHERE pallet_id = ?`);
+  const ins = db.prepare(
+    `INSERT INTO pallet_items (
+      pallet_id, title, details, quantity, kind, ref_id, name_snapshot, type_snapshot, sort_order
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  try {
+    withTransaction(() => {
+      del.run(id);
+      items.forEach((item, index) => {
+        const title = String(item.title ?? "").trim();
+        const nameSnapshot = String(item.nameSnapshot ?? title).trim();
+        const displayTitle = title || nameSnapshot;
+        if (!displayTitle) return;
+        ins.run(
+          id,
+          displayTitle,
+          String(item.details ?? "").trim(),
+          String(item.quantity ?? "").trim(),
+          item.kind === "component" || item.kind === "product" ? item.kind : null,
+          typeof item.refId === "number" ? item.refId : null,
+          nameSnapshot || displayTitle,
+          String(item.typeSnapshot ?? "").trim(),
+          index,
+        );
+      });
+    });
+  } catch (err) {
+    return reply
+      .code(500)
+      .send({
+        error:
+          err instanceof Error ? err.message : "Не удалось сохранить позиции",
+      });
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM pallet_items WHERE pallet_id = ? ORDER BY sort_order ASC, id ASC`,
+    )
+    .all(id) as PalletItemRow[];
+  return { items: rows.map(mapPalletItem) };
+});
 
 const port = Number(process.env.PORT ?? 3003);
 const host = process.env.HOST ?? "127.0.0.1";

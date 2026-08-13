@@ -23,9 +23,9 @@ export type ProfileDto = {
 
 /**
  * KPI aligned with task-manager tabs / card badges:
- * - expired = closed as failed by deadline («Просрочена» / «Просрочен» in Завершённые)
+ * - expired = closed as failed by deadline, OR open past-due checklists (frozen)
  * - completed = successfully finished for this user
- * - active / expecting = still open for this user (including currently overdue open items)
+ * - active / expecting = still open for this user (not past due)
  */
 export function getTaskKpiForUser(userId: number): ProfileKpi {
   const db = getDb();
@@ -71,6 +71,7 @@ export function getTaskKpiForUser(userId: number): ProfileKpi {
   const checklists = db
     .prepare(
       `SELECT c.status AS status, c.auto_completed AS auto_completed,
+              c.expires_at AS expires_at,
               EXISTS (
                 SELECT 1 FROM checklist_items i
                 WHERE i.checklist_id = c.id AND i.completed_at IS NULL
@@ -85,10 +86,12 @@ export function getTaskKpiForUser(userId: number): ProfileKpi {
     .all(userId) as {
     status: string;
     auto_completed: number;
+    expires_at: string | null;
     has_open_items: number;
     has_done_items: number;
   }[];
 
+  const nowMs = Date.now();
   for (const row of checklists) {
     if (row.status === "completed") {
       // Auto-closed or closed with unfinished items → «Просрочен» / «Не выполнен»
@@ -96,7 +99,15 @@ export function getTaskKpiForUser(userId: number): ProfileKpi {
       else kpi.completed += 1;
       continue;
     }
-    // Open checklist (even if past due on the card) stays in work metrics, not «Просрочено».
+    const pastDue =
+      Boolean(row.expires_at) &&
+      Number.isFinite(Date.parse(row.expires_at!)) &&
+      Date.parse(row.expires_at!) <= nowMs;
+    // Open past-due checklists are frozen and count as expired (cannot be finished).
+    if (pastDue) {
+      kpi.expired += 1;
+      continue;
+    }
     if (row.has_done_items) kpi.active += 1;
     else kpi.expecting += 1;
   }

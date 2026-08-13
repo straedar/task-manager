@@ -94,6 +94,8 @@ export interface ReferenceComponentProduct extends ReferenceProduct {
   display_as: ProductLabelKind;
   /** Text shown on the component card. */
   label: string;
+  /** How many of this component go into the finished product. */
+  quantity: number;
 }
 
 export interface ReferenceTag {
@@ -113,6 +115,8 @@ export interface ReferenceComponent {
   updated_at: string;
   type: ReferenceTag | null;
   products: ReferenceComponentProduct[];
+  /** BOM quantity when listed under a specific product. */
+  quantity?: number;
 }
 
 export interface NewsAuthor {
@@ -126,10 +130,13 @@ export interface NewsReader {
   read_at: string;
 }
 
+export type NewsChannel = "company" | "warehouse" | "patch";
+
 export interface NewsPostListItem {
   id: number;
   title: string;
   excerpt: string;
+  channel: NewsChannel;
   author: NewsAuthor;
   created_at: string;
   updated_at: string;
@@ -141,6 +148,7 @@ export interface NewsPost {
   id: number;
   title: string;
   body_html: string;
+  channel: NewsChannel;
   author: NewsAuthor;
   author_id: number;
   created_at: string;
@@ -165,6 +173,22 @@ export interface NotifPrefs {
   task_overdue: boolean;
   task_comments: boolean;
   news_any: boolean;
+}
+
+export interface ItemMessage {
+  id: number;
+  kind: "task" | "checklist";
+  ref_id: number;
+  user_id: number;
+  body: string;
+  created_at: string;
+  author_nickname: string;
+}
+
+/** Индикатор обсуждения на карточке: нет точки / зелёная / красная. */
+export interface ChatIndicator {
+  message_count: number;
+  has_unread: boolean;
 }
 
 export interface TaskAssignee extends User {
@@ -192,6 +216,7 @@ export interface Task {
   assignees: TaskAssignee[];
   creator: User;
   completed_by_user: User | null;
+  chat?: ChatIndicator;
 }
 
 export const PRIORITY_LABELS: Record<TaskPriority, string> = {
@@ -260,6 +285,9 @@ export interface ChecklistItem {
   title: string;
   position: number;
   completed_at: string | null;
+  claimed_by: number | null;
+  claimed_at: string | null;
+  claimant: User | null;
 }
 
 export interface Checklist {
@@ -274,9 +302,11 @@ export interface Checklist {
   completed_at: string | null;
   auto_completed: boolean;
   is_private: boolean;
+  is_shared: boolean;
   items: ChecklistItem[];
   creator: User;
   assignee: User;
+  chat?: ChatIndicator;
 }
 
 export type PresetKind = "task" | "checklist";
@@ -298,6 +328,46 @@ export interface TreeNode<T> {
   item: T;
   children: TreeNode<T>[];
 }
+
+export type FeedbackKind = "problem" | "improvement";
+
+export type FeedbackAuthor = {
+  id: number;
+  nickname: string;
+  first_name: string;
+  last_name: string;
+};
+
+export type FeedbackItem = {
+  id: number;
+  kind: FeedbackKind;
+  title: string;
+  description: string;
+  sort_order: number;
+  admin_done: boolean;
+  admin_comment: string;
+};
+
+export type FeedbackBatch = {
+  id: number;
+  author: FeedbackAuthor;
+  author_id: number;
+  created_at: string;
+  updated_at: string;
+  items: FeedbackItem[];
+};
+
+export type FeedbackItemInput = {
+  kind: FeedbackKind;
+  title: string;
+  description: string;
+};
+
+export type FeedbackItemReviewInput = {
+  id: number;
+  admin_done: boolean;
+  admin_comment: string;
+};
 
 export function buildTree<T extends { id: number; parent_id: number | null }>(
   items: T[]

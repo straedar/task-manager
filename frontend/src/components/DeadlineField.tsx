@@ -95,7 +95,7 @@ export function DeadlineField({
 
   return (
     <div className="w-full">
-      <span className="mb-2 block text-sm font-medium text-gray-700">Срок</span>
+        <span className="mb-2 block text-sm font-medium text-gray-700">Дедлайн</span>
       <div className="flex w-full rounded-2xl bg-gray-100 p-1">
         <button
           type="button"

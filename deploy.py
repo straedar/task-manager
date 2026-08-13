@@ -217,6 +217,12 @@ server {{
         index index.html;
     }}
 
+    # Иначе мобильные браузеры кэшируют старый index карты склада
+    location = /stockmap-app/index.html {{
+        alias {REMOTE_DIR}/stockmap/dist/index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }}
+
     location = /sw.js {{
         add_header Cache-Control "no-cache, no-store, must-revalidate";
         add_header Service-Worker-Allowed "/";
@@ -331,10 +337,12 @@ curl -sk https://127.0.0.1/api/health -H 'Host: 176-12-69-195.sslip.io' || curl 
 def should_skip(path: Path, root: Path) -> bool:
     rel = path.relative_to(root)
     parts = rel.parts
-    if parts and parts[0] in SKIP_DIRS:
-        return True
-    if any(p in SKIP_DIRS for p in parts):
-        return True
+    for i, p in enumerate(parts):
+        if p in {"node_modules", ".git", "dist", "data", "__pycache__"}:
+            return True
+        # Runtime avatar storage — not backend/src/uploads (source)
+        if p == "uploads" and "src" not in parts[:i]:
+            return True
     if path.name in SKIP_FILES:
         return True
     return False

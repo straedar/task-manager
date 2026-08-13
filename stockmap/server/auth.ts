@@ -14,6 +14,7 @@ export type AuthUser = {
   permissions: string[];
   canEditMap: boolean;
   canEditShelves: boolean;
+  requireShelfConfirm: boolean;
 };
 
 type SharedUserRow = {
@@ -154,6 +155,8 @@ function toAuthUser(user: SharedUserRow): AuthUser | null {
   const canEditMap = isRootUser || permissions.includes("stockmap.edit_map");
   const canEditShelves =
     isRootUser || permissions.includes("stockmap.edit_shelves");
+  const requireShelfConfirm =
+    !isRootUser && permissions.includes("stockmap.require_shelf_confirm");
 
   return {
     id: user.id,
@@ -162,6 +165,7 @@ function toAuthUser(user: SharedUserRow): AuthUser | null {
     permissions,
     canEditMap,
     canEditShelves,
+    requireShelfConfirm,
   };
 }
 

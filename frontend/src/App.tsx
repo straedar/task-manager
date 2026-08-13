@@ -16,7 +16,12 @@ import { NewsDetailPage } from "./pages/NewsDetailPage";
 import { NewsEditorPage } from "./pages/NewsEditorPage";
 import { NotificationSettingsPage } from "./pages/NotificationSettingsPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { FeedbackPage } from "./pages/FeedbackPage";
+import { FeedbackDetailPage } from "./pages/FeedbackDetailPage";
+import { FeedbackEditorPage } from "./pages/FeedbackEditorPage";
 import { StructurePage } from "./pages/StructurePage";
+import { TaskDetailPage } from "./pages/TaskDetailPage";
+import { ChecklistDetailPage } from "./pages/ChecklistDetailPage";
 
 export default function App() {
   return (
@@ -30,6 +35,11 @@ export default function App() {
 
               <Route path="/" element={<HubPage />} />
               <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/profile/feedback" element={<FeedbackPage />} />
+              <Route path="/profile/feedback/new" element={<FeedbackEditorPage />} />
+              <Route path="/profile/feedback/:id/edit" element={<FeedbackEditorPage />} />
+              <Route path="/profile/feedback/:id" element={<FeedbackDetailPage />} />
+              <Route path="/profile/:userId/feedback" element={<FeedbackPage />} />
               <Route path="/profile/:userId" element={<ProfilePage />} />
               <Route path="/settings/notifications" element={<NotificationSettingsPage />} />
               <Route path="/administration" element={<AdminPage />} />
@@ -48,6 +58,8 @@ export default function App() {
               <Route path="/tasks/completed" element={<HomePage />} />
               <Route path="/tasks/ideas" element={<IdeasPage />} />
               <Route path="/tasks/planner" element={<PlannerPage />} />
+              <Route path="/tasks/t/:id" element={<TaskDetailPage />} />
+              <Route path="/tasks/c/:id" element={<ChecklistDetailPage />} />
 
               {/* Legacy redirects */}
               <Route path="/completed" element={<Navigate to="/tasks/completed" replace />} />

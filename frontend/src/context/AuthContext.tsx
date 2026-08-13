@@ -7,6 +7,7 @@ interface AuthContextValue {
   user: User | null;
   loading: boolean;
   login: (nickname: string, password: string) => Promise<void>;
+  restorePassword: (nickname: string, code: string, newPassword: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   can: (code: PermissionCode) => boolean;
@@ -36,6 +37,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(user);
   };
 
+  const restorePassword = async (nickname: string, code: string, newPassword: string) => {
+    const { user } = await api.restorePassword(nickname, code, newPassword);
+    setUser(user);
+  };
+
   const logout = async () => {
     await api.logout();
     setUser(null);
@@ -44,7 +50,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const can = (code: PermissionCode) => userCan(user, code);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, refresh, can }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, restorePassword, logout, refresh, can }}
+    >
       {children}
     </AuthContext.Provider>
   );

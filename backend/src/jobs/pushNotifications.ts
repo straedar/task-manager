@@ -4,7 +4,7 @@ import { notifyUser, type TaskPriority } from "../services/notify.js";
 import { moscowDateKey } from "../utils/moscowTime.js";
 
 const INTERVAL_MS = 60_000;
-const REMIND_BEFORE_MS = 60 * 60 * 1000; // 1 hour before deadline
+const REMIND_BEFORE_MS = 60 * 60 * 1000; // окно: дедлайн в ближайший час
 
 function moscowHour(date = new Date()): number {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -22,6 +22,26 @@ function formatMoscowTime(iso: string): string {
     minute: "2-digit",
     hour12: false,
   }).format(new Date(iso.includes("T") ? iso : `${iso.replace(" ", "T")}Z`));
+}
+
+function parseDeadline(iso: string): Date {
+  return new Date(iso.includes("T") ? iso : `${iso.replace(" ", "T")}Z`);
+}
+
+function pluralMinutes(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "минута";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return "минуты";
+  return "минут";
+}
+
+/** Текст остатка до дедлайна: «остался час» или «осталось N минут». */
+function formatRemainingLabel(deadlineIso: string, now: Date): string {
+  const ms = parseDeadline(deadlineIso).getTime() - now.getTime();
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes >= 60) return "остался час";
+  return `осталось ${minutes} ${pluralMinutes(minutes)}`;
 }
 
 function taskPriority(id: number): TaskPriority | null {
@@ -60,9 +80,10 @@ async function remindChecklistDeadlines(now: Date) {
     if (!claimPushSend(key)) continue;
 
     const time = formatMoscowTime(row.expires_at);
+    const remaining = formatRemainingLabel(row.expires_at, now);
     await notifyUser(row.assignee_id, "checklist_remind", {
       title: "Скоро истекает срок чеклиста",
-      body: `«${row.title}» — до ${time} МСК остался час`,
+      body: `«${row.title}» — до ${time} МСК ${remaining}`,
       url: "/tasks",
       tag: `checklist-remind-${row.id}`,
     });
@@ -128,6 +149,7 @@ async function remindTaskDeadlines(now: Date) {
     if (!claimPushSend(key)) continue;
 
     const time = formatMoscowTime(row.due_at);
+    const remaining = formatRemainingLabel(row.due_at, now);
     const priority = taskPriority(row.id);
     for (const a of assignees) {
       await notifyUser(
@@ -135,7 +157,7 @@ async function remindTaskDeadlines(now: Date) {
         "task_remind_1h",
         {
           title: "Скоро истекает срок задачи",
-          body: `«${row.title}» — до ${time} МСК остался час`,
+          body: `«${row.title}» — до ${time} МСК ${remaining}`,
           url: "/tasks",
           tag: `task-remind-${row.id}`,
         },

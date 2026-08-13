@@ -6,6 +6,7 @@ import {
   type ReferenceCatalogItem,
   type ShelfItemContent,
 } from "./api";
+import { CheckboxIndicator } from "./CheckboxIndicator";
 
 export type CatalogPick = {
   kind: CatalogKind;
@@ -131,25 +132,31 @@ export function CatalogContentsPicker({ initial, canEdit, onChange }: Props) {
       </div>
 
       {selected.length > 0 && (
-        <div className="catalog-chips">
+        <div className="catalog-selected" role="list">
           {selected.map((s) => (
-            <button
+            <label
               key={keyOf(s.kind, s.refId)}
-              type="button"
-              className="catalog-chip"
-              disabled={!canEdit}
-              onClick={() => remove(s.kind, s.refId)}
-              title={canEdit ? "Убрать" : s.nameSnapshot}
+              className={`checkbox-row${canEdit ? "" : " is-readonly"}`}
+              role="listitem"
             >
-              <span className="catalog-chip-kind">
-                {s.kind === "component" ? "К" : "П"}
-              </span>
-              <span className="catalog-chip-text">
-                {s.typeSnapshot ? `${s.typeSnapshot}: ` : ""}
+              <CheckboxIndicator checked />
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked
+                disabled={!canEdit}
+                onChange={() => remove(s.kind, s.refId)}
+              />
+              <span className="checkbox-row-text">
+                <span className="catalog-row-kind">
+                  {s.kind === "component" ? "К" : "П"}
+                </span>
+                {s.typeSnapshot ? (
+                  <span className="catalog-row-type">{s.typeSnapshot} · </span>
+                ) : null}
                 {s.nameSnapshot}
               </span>
-              {canEdit && <span className="catalog-chip-x">×</span>}
-            </button>
+            </label>
           ))}
         </div>
       )}
@@ -187,6 +194,7 @@ export function CatalogContentsPicker({ initial, canEdit, onChange }: Props) {
             className="catalog-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            autoFocus={false}
             placeholder={
               tab === "component"
                 ? "Найти комплектующее или тип…"
@@ -216,13 +224,15 @@ export function CatalogContentsPicker({ initial, canEdit, onChange }: Props) {
                   const typeName =
                     tab === "component" ? item.type?.name : undefined;
                   return (
-                    <label key={`${tab}-${item.id}`} className="catalog-row">
+                    <label key={`${tab}-${item.id}`} className="checkbox-row">
+                      <CheckboxIndicator checked={checked} />
                       <input
                         type="checkbox"
+                        className="sr-only"
                         checked={checked}
                         onChange={() => toggle(item, tab)}
                       />
-                      <span>
+                      <span className="checkbox-row-text">
                         {typeName ? (
                           <span className="catalog-row-type">{typeName} · </span>
                         ) : null}

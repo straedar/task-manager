@@ -8,9 +8,10 @@ import { Modal } from "./Modal";
 import { AssigneePicker } from "./AssigneePicker";
 import { CheckboxIndicator } from "./CheckboxIndicator";
 import { Select } from "./Select";
-import { isPastMoscowDay, moscowDateKey, moscowDateTimeIso, moscowTimeFromIso } from "../utils/moscow";
+import { isPastMoscowDay, moscowDateKey, moscowDateKeyFromIso, moscowDateTimeIso, moscowTimeFromIso } from "../utils/moscow";
 import { beginEditing, endEditing } from "../lib/editingLock";
 import { DeadlineField } from "./DeadlineField";
+import { formatDayHeading } from "../utils/date";
 
 interface ChecklistFormDialogProps {
   open: boolean;
@@ -43,8 +44,10 @@ export function ChecklistFormDialog({
   const [assigneeId, setAssigneeId] = useState<number | null>(null);
   const [hasDeadline, setHasDeadline] = useState(true);
   const [deadlineDate, setDeadlineDate] = useState(() => moscowDateKey());
-  const [deadlineTime, setDeadlineTime] = useState("19:00");
+  const [deadlineTime, setDeadlineTime] = useState("18:00");
   const [isPrivate, setIsPrivate] = useState(false);
+  const [isShared, setIsShared] = useState(false);
+  const [hasSubordinates, setHasSubordinates] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -56,8 +59,9 @@ export function ChecklistFormDialog({
 
   useEffect(() => {
     if (!open) return;
-    api.getAssignableUsers().then(({ users: next }) => {
+    api.getAssignableUsers().then(({ users: next, has_subordinates }) => {
       setUsers(next);
+      setHasSubordinates(Boolean(has_subordinates));
       if (!checklist && next.length === 1) setAssigneeId(next[0].id);
     });
     if (!checklist) {
@@ -82,9 +86,14 @@ export function ChecklistFormDialog({
       );
       setAssigneeId(checklist.assignee_id);
       setHasDeadline(Boolean(checklist.expires_at));
-      setDeadlineDate(checklist.planned_for || moscowDateKey());
-      setDeadlineTime(moscowTimeFromIso(checklist.expires_at, "19:00"));
+      setDeadlineDate(
+        (checklist.expires_at && moscowDateKeyFromIso(checklist.expires_at)) ||
+          checklist.planned_for ||
+          moscowDateKey()
+      );
+      setDeadlineTime(moscowTimeFromIso(checklist.expires_at, "18:00"));
       setIsPrivate(Boolean(checklist.is_private));
+      setIsShared(Boolean(checklist.is_shared));
       setPresetId("");
     } else {
       setTitle("");
@@ -92,8 +101,9 @@ export function ChecklistFormDialog({
       setAssigneeId(null);
       setHasDeadline(true);
       setDeadlineDate(plannedDateKey || moscowDateKey());
-      setDeadlineTime("19:00");
+      setDeadlineTime("18:00");
       setIsPrivate(false);
+      setIsShared(false);
       setPresetId("");
     }
     setError("");
@@ -101,11 +111,25 @@ export function ChecklistFormDialog({
   }, [open, checklist?.id]);
 
   const ownerId = checklist?.created_by ?? user?.id ?? null;
-  const assignedToSelf = Boolean(ownerId && assigneeId === ownerId);
+  const assignedToSelf = Boolean(ownerId && assigneeId === ownerId) && !isShared;
 
   const setAssignee = (id: number) => {
+    if (isShared) return;
     setAssigneeId(id);
     if (!(ownerId && id === ownerId)) setIsPrivate(false);
+  };
+
+  const setShared = (checked: boolean) => {
+    if (checked && !hasSubordinates && !checklist?.is_shared) {
+      setError("Общий чеклист может создать только пользователь с подчинёнными");
+      return;
+    }
+    setError("");
+    setIsShared(checked);
+    if (checked) {
+      setIsPrivate(false);
+      if (user) setAssigneeId(user.id);
+    }
   };
 
   const presetOptions = useMemo(
@@ -163,7 +187,8 @@ export function ChecklistFormDialog({
     const cleaned = items
       .map((item) => ({ id: item.id, title: item.title.trim() }))
       .filter((item) => item.title);
-    if (!assigneeId) {
+    const effectiveAssigneeId = isShared && user ? (checklist?.created_by ?? user.id) : assigneeId;
+    if (!effectiveAssigneeId) {
       setError("Выберите исполнителя");
       return;
     }
@@ -174,7 +199,10 @@ export function ChecklistFormDialog({
 
     setLoading(true);
     try {
-      const dateKey = hasDeadline ? plannedDateKey || deadlineDate : null;
+      const dateKey = hasDeadline ? deadlineDate : null;
+      const prevDeadlineDay = checklist?.expires_at
+        ? moscowDateKeyFromIso(checklist.expires_at)
+        : null;
       if (!checklist && hasDeadline && isPastMoscowDay(dateKey)) {
         setError("Нельзя указать прошедший день");
         setLoading(false);
@@ -185,39 +213,46 @@ export function ChecklistFormDialog({
         hasDeadline &&
         dateKey &&
         isPastMoscowDay(dateKey) &&
-        dateKey !== checklist.planned_for
+        dateKey !== prevDeadlineDay
       ) {
-        setError("Нельзя перенести чеклист на прошедший день");
+        setError("Нельзя указать прошедший день дедлайна");
         setLoading(false);
         return;
       }
       const expiresAt =
         hasDeadline && dateKey ? moscowDateTimeIso(dateKey, deadlineTime) : null;
       if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
-        setError("Дедлайн не может быть в прошлом");
-        setLoading(false);
-        return;
+        const sameAsBefore =
+          checklist?.expires_at && expiresAt === checklist.expires_at;
+        if (!sameAsBefore) {
+          setError("Дедлайн не может быть в прошлом");
+          setLoading(false);
+          return;
+        }
       }
       if (checklist) {
         await api.updateChecklist(checklist.id, {
           title: title.trim(),
-          assignee_id: assigneeId,
+          assignee_id: effectiveAssigneeId,
           items: cleaned,
           has_deadline: hasDeadline,
-          planned_for: plannedDateKey || (hasDeadline ? checklist.planned_for : null),
+          // Keep planner day as-is when editing deadline.
+          planned_for: checklist.planned_for,
           expires_at: expiresAt,
           is_private: assignedToSelf && isPrivate,
+          is_shared: isShared,
         });
       } else {
         await api.createChecklist({
           title: title.trim(),
-          assignee_id: assigneeId,
+          assignee_id: effectiveAssigneeId,
           items: cleaned.map((item) => item.title),
           has_deadline: hasDeadline,
-          // Planner day only when created from planner; deadline alone must not defer.
+          // Planner day only when created from planner; deadline is independent.
           planned_for: plannedDateKey || null,
           expires_at: expiresAt,
           is_private: assignedToSelf && isPrivate,
+          is_shared: isShared,
         });
       }
       onClose();
@@ -304,26 +339,81 @@ export function ChecklistFormDialog({
           </button>
         </div>
 
+        {plannedDateKey && (
+          <div className="rounded-2xl border border-orange-100 bg-orange-50/70 px-4 py-3 text-sm text-orange-800">
+            День в планировщике:{" "}
+            <span className="font-semibold">{formatDayHeading(plannedDateKey)}</span>
+          </div>
+        )}
+        {editing && checklist?.planned_for && !plannedDateKey && (
+          <div className="rounded-2xl border border-orange-100 bg-orange-50/70 px-4 py-3 text-sm text-orange-800">
+            День в планировщике:{" "}
+            <span className="font-semibold">
+              {formatDayHeading(checklist.planned_for)}
+            </span>
+          </div>
+        )}
+
         <DeadlineField
           enabled={hasDeadline}
           dateKey={deadlineDate}
           onEnabledChange={setHasDeadline}
           onDateChange={setDeadlineDate}
-          lockedDateKey={plannedDateKey}
           time={deadlineTime}
           onTimeChange={setDeadlineTime}
           enabledLabel="Со сроком"
           disabledLabel="Без срока"
         />
 
-        <div className="w-full">
-          <span className="mb-2 block text-sm font-medium text-gray-700">Исполнитель</span>
-          <AssigneePicker
-            users={users}
-            selectedIds={assigneeId ? [assigneeId] : []}
-            onToggle={setAssignee}
+        <label
+          className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 shadow-sm transition ${
+            hasSubordinates || checklist?.is_shared
+              ? "cursor-pointer border-gray-200 bg-white hover:border-orange-200"
+              : "cursor-not-allowed border-gray-100 bg-gray-50 opacity-60"
+          }`}
+        >
+          <CheckboxIndicator checked={isShared} />
+          <input
+            type="checkbox"
+            checked={isShared}
+            disabled={!hasSubordinates && !checklist?.is_shared}
+            onChange={(e) => setShared(e.target.checked)}
+            className="sr-only"
           />
-        </div>
+          <span>
+            <span className="block text-sm font-medium text-gray-800">Общий чеклист</span>
+            <span className="block text-xs text-gray-400">
+              Участники берут пункты (▶), затем отмечают выполненными (✓)
+            </span>
+          </span>
+        </label>
+
+        {!hasSubordinates && !checklist?.is_shared && (
+          <p className="text-xs text-gray-400">
+            Общий чеклист можно создать, когда у вас есть подчинённые в структуре
+          </p>
+        )}
+
+        {isShared ? (
+          <div className="w-full rounded-2xl border border-orange-100 bg-orange-50/60 px-4 py-3">
+            <p className="mb-2 text-sm font-medium text-orange-800">Участники</p>
+            <p className="break-words text-sm text-orange-700">
+              Вы и все ваши подчинённые: {users.map((u) => u.nickname).join(", ") || "—"}
+            </p>
+            <p className="mt-2 text-xs text-orange-600">
+              Чужой пункт может завершить только постановщик или админ
+            </p>
+          </div>
+        ) : (
+          <div className="w-full">
+            <span className="mb-2 block text-sm font-medium text-gray-700">Исполнитель</span>
+            <AssigneePicker
+              users={users}
+              selectedIds={assigneeId ? [assigneeId] : []}
+              onToggle={setAssignee}
+            />
+          </div>
+        )}
 
         {assignedToSelf && (
           <label className="flex w-full cursor-pointer items-center gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm transition hover:border-sky-200">
@@ -347,7 +437,7 @@ export function ChecklistFormDialog({
 
         <button
           type="submit"
-          disabled={loading || !assigneeId}
+          disabled={loading || (!isShared && !assigneeId)}
           className="w-full rounded-2xl py-3.5 font-medium text-white gradient-accent disabled:opacity-50"
         >
           {loading ? "Сохранение..." : editing ? "Сохранить" : "Создать"}

@@ -9,6 +9,7 @@ import {
   listNewsPosts,
   markNewsRead,
   updateNewsPost,
+  type NewsChannel,
 } from "../db/queries/news.js";
 import {
   commitPatchVersion,
@@ -33,9 +34,12 @@ import { notifyUsers } from "../services/notify.js";
 
 const router = Router();
 
+const newsChannelSchema = z.enum(["company", "warehouse", "patch"]);
+
 const postSchema = z.object({
   title: z.string().trim().min(1, "Укажите заголовок").max(200),
   body_html: z.string().max(50_000).optional().default(""),
+  channel: z.enum(["company", "warehouse"]).optional(),
   patch: z
     .object({
       version: z.string().regex(/^\d+\.\d+\.\d+$/, "Неверная версия"),
@@ -44,6 +48,11 @@ const postSchema = z.object({
     })
     .optional(),
 });
+
+function parseListChannel(raw: unknown): NewsChannel {
+  const parsed = newsChannelSchema.safeParse(raw);
+  return parsed.success ? parsed.data : "company";
+}
 
 function denyUnlessApp(req: AuthRequest, res: import("express").Response) {
   if (!req.user) {
@@ -133,7 +142,8 @@ router.get("/", (req: AuthRequest, res) => {
     res.status(403).json({ error: "Недостаточно прав" });
     return;
   }
-  res.json({ items: listNewsPosts(req.user!.id) });
+  const channel = parseListChannel(req.query.channel);
+  res.json({ items: listNewsPosts(req.user!.id, channel), channel });
 });
 
 /** Preview draft for the patch-note editor (does not publish). */
@@ -244,6 +254,7 @@ router.post("/", (req: AuthRequest, res) => {
           title: parsed.data.title,
           body_html,
           author_id: req.user!.id,
+          channel: "patch",
         });
         recordPatchRelease({
           version,
@@ -263,10 +274,12 @@ router.post("/", (req: AuthRequest, res) => {
     }
   }
 
+  const channel = parsed.data.channel === "warehouse" ? "warehouse" : "company";
   const item = createNewsPost({
     title: parsed.data.title,
     body_html,
     author_id: req.user!.id,
+    channel,
   });
   notifyNewsCreated(req.user!.id, item.title, item.id);
   res.status(201).json({ item });

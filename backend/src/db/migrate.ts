@@ -83,6 +83,7 @@ export function migrate(db: DatabaseSync) {
   migratePlannerFields(db);
   migratePresets(db);
   migratePrivateItems(db);
+  migrateSharedChecklists(db);
   migratePush(db);
   migrateTaskAutoCompleted(db);
   migrateRoles(db);
@@ -90,9 +91,100 @@ export function migrate(db: DatabaseSync) {
   migrateCatalogReadForStockmap(db);
   migrateNewsOwnPermissions(db);
   migrateNewsPatchTables(db);
+  migrateNewsChannels(db);
   migrateUserProfile(db);
   migrateAdminStructureRename(db);
   migrateStructureAppPermission(db);
+  migratePasswordRestore(db);
+  migrateItemMessages(db);
+  migrateFeedback(db);
+}
+
+function migrateFeedback(db: DatabaseSync) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS feedback_batches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS feedback_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id INTEGER NOT NULL REFERENCES feedback_batches(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('problem', 'improvement')),
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_feedback_batches_author ON feedback_batches(author_id)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_feedback_batches_created ON feedback_batches(created_at DESC)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_feedback_items_batch ON feedback_items(batch_id, sort_order)`
+  );
+
+  const itemCols = db
+    .prepare("PRAGMA table_info(feedback_items)")
+    .all() as { name: string }[];
+  if (!itemCols.some((c) => c.name === "admin_done")) {
+    db.exec(
+      `ALTER TABLE feedback_items ADD COLUMN admin_done INTEGER NOT NULL DEFAULT 0`
+    );
+  }
+  if (!itemCols.some((c) => c.name === "admin_comment")) {
+    db.exec(
+      `ALTER TABLE feedback_items ADD COLUMN admin_comment TEXT NOT NULL DEFAULT ''`
+    );
+  }
+}
+
+function migrateItemMessages(db: DatabaseSync) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS item_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL CHECK (kind IN ('task', 'checklist')),
+      ref_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_item_messages_thread ON item_messages(kind, ref_id, id)`
+  );
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS item_message_reads (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('task', 'checklist')),
+      ref_id INTEGER NOT NULL,
+      last_read_message_id INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, kind, ref_id)
+    );
+  `);
+}
+
+function migratePasswordRestore(db: DatabaseSync) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS password_restore_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      code_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_by INTEGER NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_password_restore_user ON password_restore_codes(user_id)`
+  );
+  db.exec(`DROP TABLE IF EXISTS reference_item_aliases`);
 }
 
 /** Grant «Структура» to roles that already have tasks (or employee seed). */
@@ -245,6 +337,14 @@ function migrateReference(db: DatabaseSync) {
       `ALTER TABLE reference_component_products ADD COLUMN display_as TEXT NOT NULL DEFAULT 'tag'`
     );
   }
+  const linkColsAfter = db
+    .prepare("PRAGMA table_info(reference_component_products)")
+    .all() as { name: string }[];
+  if (!linkColsAfter.some((c) => c.name === "quantity")) {
+    db.exec(
+      `ALTER TABLE reference_component_products ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1`
+    );
+  }
 }
 
 function migrateRoles(db: DatabaseSync) {
@@ -320,6 +420,23 @@ function migratePrivateItems(db: DatabaseSync) {
   const checklistCols = db.prepare("PRAGMA table_info(checklists)").all() as { name: string }[];
   if (!checklistCols.some((c) => c.name === "is_private")) {
     db.exec("ALTER TABLE checklists ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+function migrateSharedChecklists(db: DatabaseSync) {
+  const checklistCols = db.prepare("PRAGMA table_info(checklists)").all() as { name: string }[];
+  if (checklistCols.length === 0) return;
+  if (!checklistCols.some((c) => c.name === "is_shared")) {
+    db.exec("ALTER TABLE checklists ADD COLUMN is_shared INTEGER NOT NULL DEFAULT 0");
+  }
+
+  const itemCols = db.prepare("PRAGMA table_info(checklist_items)").all() as { name: string }[];
+  if (itemCols.length === 0) return;
+  if (!itemCols.some((c) => c.name === "claimed_by")) {
+    db.exec("ALTER TABLE checklist_items ADD COLUMN claimed_by INTEGER REFERENCES users(id)");
+  }
+  if (!itemCols.some((c) => c.name === "claimed_at")) {
+    db.exec("ALTER TABLE checklist_items ADD COLUMN claimed_at TEXT");
   }
 }
 
@@ -511,6 +628,23 @@ function migrateSharedTasks(db: DatabaseSync) {
       WHERE task_id IN (SELECT id FROM tasks WHERE status = 'completed')
     `);
   }
+}
+
+function migrateNewsChannels(db: DatabaseSync) {
+  const newsCols = db.prepare("PRAGMA table_info(news_posts)").all() as { name: string }[];
+  if (newsCols.length === 0) return;
+  if (!newsCols.some((c) => c.name === "channel")) {
+    db.exec(
+      `ALTER TABLE news_posts ADD COLUMN channel TEXT NOT NULL DEFAULT 'company'`
+    );
+  }
+  db.exec(`
+    UPDATE news_posts
+    SET channel = 'patch'
+    WHERE id IN (SELECT post_id FROM news_patch_releases)
+      AND channel != 'patch'
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_news_posts_channel ON news_posts(channel)`);
 }
 
 function migrateTaskStatuses(db: DatabaseSync) {

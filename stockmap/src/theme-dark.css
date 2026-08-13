@@ -208,14 +208,23 @@ html[data-ui-theme="dark"] .interior-label {
   color: var(--ink);
 }
 
+html[data-ui-theme="dark"] .rack-side-name {
+  color: #fff;
+}
+
+html[data-ui-theme="dark"] .interior-tools-menu {
+  background: var(--card-soft, #2a2e34);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+}
+
 html[data-ui-theme="dark"] .interior-stage {
   border-radius: 22px;
   border-color: rgba(255, 255, 255, 0.08);
-  background:
-    radial-gradient(700px 380px at 50% 0%, rgba(150, 158, 168, 0.35) 0%, transparent 60%),
-    linear-gradient(180deg, #7a828c 0%, #6a727c 55%, #5e666f 100%);
+  /* Пол карты тот же (#c8d2db), тема UI его не меняет */
+  background: #c8d2db;
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
     0 18px 40px rgba(0, 0, 0, 0.3);
 }
 
@@ -287,10 +296,68 @@ html[data-ui-theme="dark"] .catalog-tabs button.active {
   color: var(--ink);
 }
 
+html[data-ui-theme="dark"] .pallet-row {
+  background: var(--card-soft);
+  border-color: var(--line);
+}
+
 html[data-ui-theme="dark"] .catalog-chip {
   background: rgba(240, 138, 46, 0.16);
   border-color: rgba(240, 138, 46, 0.35);
   color: var(--ink);
+}
+
+/* Выбранные позиции: тёмный фон + светлый текст (не белая «плашка») */
+html[data-ui-theme="dark"] .catalog-selected,
+html[data-ui-theme="dark"] .catalog-list,
+html[data-ui-theme="dark"] .catalog-readonly-list {
+  background: var(--card-soft);
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .catalog-readonly-list li + li {
+  border-top-color: var(--line);
+}
+
+html[data-ui-theme="dark"] .checkbox-row {
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .checkbox-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-ui-theme="dark"] .catalog-row-type {
+  color: #b6bfc8;
+}
+
+html[data-ui-theme="dark"] .catalog-picker-count,
+html[data-ui-theme="dark"] .catalog-empty,
+html[data-ui-theme="dark"] .catalog-hint {
+  color: #b6bfc8;
+}
+
+html[data-ui-theme="dark"] .item-detail-field span,
+html[data-ui-theme="dark"] .item-detail .field > span {
+  color: #c8d0d8;
+}
+
+html[data-ui-theme="dark"] .item-detail-field input,
+html[data-ui-theme="dark"] .item-detail-field textarea {
+  background: var(--card-soft);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+html[data-ui-theme="dark"] .item-detail-field input::placeholder,
+html[data-ui-theme="dark"] .item-detail-field textarea::placeholder {
+  color: #8b949e;
+  opacity: 1;
+}
+
+html[data-ui-theme="dark"] .item-detail-meta,
+html[data-ui-theme="dark"] .item-detail-kicker {
+  color: #b6bfc8;
 }
 
 html[data-ui-theme="dark"] .item-detail-backdrop,

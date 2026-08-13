@@ -57,7 +57,6 @@ export function HubPage() {
             <h1 className="text-2xl font-bold tracking-tight gradient-text sm:text-3xl">
               TaskMaster
             </h1>
-            <p className="mt-0.5 truncate text-sm text-gray-500">Мини-приложения</p>
           </div>
         </div>
         <HubLogoutButton />
@@ -66,8 +65,6 @@ export function HubPage() {
       {profile && (
         <HubProfileBanner profile={profile} onOpen={() => navigate("/profile")} />
       )}
-
-      <p className="mb-4 text-sm font-medium text-gray-600">Приложения</p>
 
       {appsLoading ? (
         <p className="py-12 text-center text-sm text-gray-400">Загрузка...</p>

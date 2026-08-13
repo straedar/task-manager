@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   Crown,
+  KeyRound,
   Pencil,
   Plus,
   Shield,
@@ -17,6 +18,7 @@ interface UserTreeProps {
   onAddChild: (parentId: number | null) => void;
   onMove: (user: User) => void;
   onChangeRole?: (user: User) => void;
+  onRestoreCode?: (user: User) => void;
   onDelete: (user: User) => void;
 }
 
@@ -27,6 +29,7 @@ function TreeNodeView({
   onAddChild,
   onMove,
   onChangeRole,
+  onRestoreCode,
   onDelete,
 }: {
   node: TreeNode<User>;
@@ -35,6 +38,7 @@ function TreeNodeView({
   onAddChild: (parentId: number | null) => void;
   onMove: (user: User) => void;
   onChangeRole?: (user: User) => void;
+  onRestoreCode?: (user: User) => void;
   onDelete: (user: User) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -89,6 +93,16 @@ function TreeNodeView({
           >
             <Plus className="h-4 w-4" />
           </button>
+          {onRestoreCode && (
+            <button
+              type="button"
+              onClick={() => onRestoreCode(item)}
+              className="rounded-lg p-1.5 text-gray-400 hover:bg-orange-50 hover:text-orange-500"
+              title="Код восстановления пароля"
+            >
+              <KeyRound className="h-4 w-4" />
+            </button>
+          )}
           {!isRootUser && (
             <>
               {onChangeRole && (
@@ -132,6 +146,7 @@ function TreeNodeView({
             onAddChild={onAddChild}
             onMove={onMove}
             onChangeRole={onChangeRole}
+            onRestoreCode={onRestoreCode}
             onDelete={onDelete}
           />
         ))}
@@ -145,6 +160,7 @@ export function UserTree({
   onAddChild,
   onMove,
   onChangeRole,
+  onRestoreCode,
   onDelete,
 }: UserTreeProps) {
   if (nodes.length === 0) {
@@ -166,6 +182,7 @@ export function UserTree({
           onAddChild={onAddChild}
           onMove={onMove}
           onChangeRole={onChangeRole}
+          onRestoreCode={onRestoreCode}
           onDelete={onDelete}
         />
       ))}

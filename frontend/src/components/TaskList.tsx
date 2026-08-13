@@ -11,6 +11,7 @@ import {
   isDeferredItem,
   moscowDateKey,
 } from "../utils/moscow";
+import { isChecklistOverdue } from "../utils/checklistStatus";
 
 type TaskTab = "active" | "completed";
 
@@ -26,7 +27,11 @@ interface TaskListProps {
   onStart: (id: number) => void;
   onComplete: (id: number) => void;
   onDelete: (id: number) => void;
-  onToggleChecklistItem: (checklistId: number, itemId: number, completed: boolean) => void;
+  onToggleChecklistItem: (
+    checklistId: number,
+    itemId: number,
+    payload: boolean | { action: "claim" | "complete" | "uncomplete" }
+  ) => void;
   onDeleteChecklist: (id: number) => void;
   onUpdated: () => void;
   actingId?: number | null;
@@ -156,6 +161,8 @@ export function TaskList({
 
     for (const checklist of homeChecklists) {
       if (checklist.status !== "open") continue;
+      // Past deadline → not active work; shown under «Завершённые» as overdue.
+      if (isChecklistOverdue(checklist)) continue;
       if (!matchesChecklistAssignee(checklist, assigneeFilter)) continue;
       if (!matchesChecklistSearch(checklist, activeQuery)) continue;
       items.push({
@@ -180,7 +187,9 @@ export function TaskList({
   const completedChecklists = useMemo(
     () =>
       homeChecklists
-        .filter((c) => c.status === "completed")
+        .filter(
+          (c) => c.status === "completed" || isChecklistOverdue(c)
+        )
         .filter((c) => matchesChecklistAssignee(c, assigneeFilter)),
     [homeChecklists, assigneeFilter]
   );

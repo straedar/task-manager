@@ -12,6 +12,7 @@ import { Select } from "./Select";
 import { moscowDateTimeIso, isPastMoscowDay, moscowDateKey } from "../utils/moscow";
 import { beginEditing, endEditing } from "../lib/editingLock";
 import { DeadlineField } from "./DeadlineField";
+import { formatDayHeading } from "../utils/date";
 
 interface CreateTaskDialogProps {
   onCreated: () => void;
@@ -155,7 +156,7 @@ export function CreateTaskDialog({
     }
     setLoading(true);
     try {
-      const dateKey = hasDeadline ? plannedDateKey || deadlineDate : null;
+      const dateKey = hasDeadline ? deadlineDate : null;
       if (hasDeadline && isPastMoscowDay(dateKey)) {
         setError("Нельзя указать прошедший день");
         setLoading(false);
@@ -175,7 +176,7 @@ export function CreateTaskDialog({
         is_shared: isShared,
         is_private: assignedOnlyToSelf && isPrivate,
         due_at: dueAt,
-        // Planner day only when created from planner; deadline alone must not defer the task.
+        // Planner day only when created from planner; deadline is independent.
         planned_for: plannedDateKey || null,
       });
       close();
@@ -268,14 +269,22 @@ export function CreateTaskDialog({
             <PriorityToggle value={priority} onChange={setPriority} />
           </div>
 
+          {plannedDateKey && (
+            <div className="rounded-2xl border border-orange-100 bg-orange-50/70 px-4 py-3 text-sm text-orange-800">
+              День в планировщике:{" "}
+              <span className="font-semibold">{formatDayHeading(plannedDateKey)}</span>
+            </div>
+          )}
+
           <DeadlineField
             enabled={hasDeadline}
             dateKey={deadlineDate}
             onEnabledChange={setHasDeadline}
             onDateChange={setDeadlineDate}
-            lockedDateKey={plannedDateKey}
             time={deadlineTime}
             onTimeChange={setDeadlineTime}
+            enabledLabel="Со сроком"
+            disabledLabel="Без срока"
           />
 
           <label

@@ -26,6 +26,7 @@ export function AdminPage() {
     | { type: "add"; parentId: number | null }
     | { type: "move"; user: User }
     | { type: "role"; user: User }
+    | { type: "restore"; user: User; code: string; expires_at: string }
     | null
   >(null);
   const [nickname, setNickname] = useState("");
@@ -184,6 +185,24 @@ export function AdminPage() {
     }
   };
 
+  const handleRestoreCode = async (u: User) => {
+    setError("");
+    setSaving(true);
+    try {
+      const res = await api.createRestoreCode(u.id);
+      setDialog({
+        type: "restore",
+        user: u,
+        code: res.code,
+        expires_at: res.expires_at,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось создать код");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (authLoading) {
     return <div className="flex min-h-screen items-center justify-center text-gray-400">Загрузка...</div>;
   }
@@ -272,6 +291,7 @@ export function AdminPage() {
             setRoleId(u.role_id ?? "");
             setDialog({ type: "role", user: u });
           }}
+          onRestoreCode={(u) => void handleRestoreCode(u)}
           onDelete={handleDelete}
         />
       )}
@@ -285,7 +305,9 @@ export function AdminPage() {
                   ? "Новый пользователь"
                   : dialog.type === "move"
                     ? "Переместить"
-                    : "Роль сотрудника"}
+                    : dialog.type === "restore"
+                      ? "Код восстановления"
+                      : "Роль сотрудника"}
               </h2>
               <button type="button" onClick={closeDialog} className="text-gray-400 hover:text-gray-600">
                 <X className="h-5 w-5" />
@@ -355,6 +377,37 @@ export function AdminPage() {
                   {saving ? "Сохранение..." : "Переместить"}
                 </button>
               </form>
+            ) : dialog.type === "restore" ? (
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600">
+                  Код для <strong>{dialog.user.nickname}</strong>. Покажите его сотруднику один
+                  раз — потом код больше не отобразится.
+                </p>
+                <div className="rounded-2xl bg-orange-50 px-4 py-5 text-center">
+                  <p className="font-mono text-2xl font-bold tracking-[0.2em] text-orange-700">
+                    {dialog.code}
+                  </p>
+                </div>
+                <p className="text-xs text-gray-400">
+                  Действует 24 часа. На экране входа: «Есть код восстановления?»
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(dialog.code);
+                  }}
+                  className="w-full rounded-xl border border-gray-200 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Скопировать код
+                </button>
+                <button
+                  type="button"
+                  onClick={closeDialog}
+                  className="w-full rounded-xl py-3 font-medium text-white gradient-accent"
+                >
+                  Готово
+                </button>
+              </div>
             ) : (
               <form onSubmit={(e) => void handleRole(e)} className="space-y-4">
                 <p className="text-sm text-gray-600">

@@ -7,6 +7,7 @@ import {
   createTask,
   completeTask,
   startTask,
+  restoreTask,
   deleteTask,
   updateTask,
   getTaskById,
@@ -15,8 +16,10 @@ import {
   canCreateTask,
   canCompleteTask,
   canStartTask,
+  canRestoreTask,
   canDeleteTask,
   canEditTask,
+  canViewTask,
   canAssignToUsers,
   canCreateSharedTask,
   getSharedTaskAssigneeIds,
@@ -25,12 +28,17 @@ import {
   hasSubordinates,
 } from "../permissions.js";
 import { getUserPublicById } from "../db/queries/users.js";
+import { createMessage, listMessages, markThreadRead, withChat, getChatIndicator } from "../db/queries/itemMessages.js";
 import { notifyUsers } from "../services/notify.js";
 import { isPastMoscowDay } from "../utils/moscowTime.js";
 
 const router = Router();
 
 router.use(requireAuth, requirePermission("app.tasks"));
+
+const messageSchema = z.object({
+  body: z.string().trim().min(1, "Введите сообщение").max(2000, "Максимум 2000 символов"),
+});
 
 const createTaskSchema = z
   .object({
@@ -62,7 +70,7 @@ const createTaskSchema = z
 
 router.get("/", requireAuth, (req: AuthRequest, res) => {
   const tasks = filterVisibleTasks(req.user!, getAllTasks());
-  res.json({ tasks });
+  res.json({ tasks: withChat("task", tasks, req.user!.id) });
 });
 
 router.get("/assignable-users", requireAuth, (req: AuthRequest, res) => {
@@ -70,6 +78,89 @@ router.get("/assignable-users", requireAuth, (req: AuthRequest, res) => {
   res.json({
     users: getAssignableUsers(user),
     has_subordinates: hasSubordinates(user),
+  });
+});
+
+router.get("/:id/messages", requireAuth, (req: AuthRequest, res) => {
+  const taskId = Number(req.params.id);
+  if (Number.isNaN(taskId)) {
+    res.status(400).json({ error: "Неверный ID задачи" });
+    return;
+  }
+  const task = getTaskById(taskId);
+  if (!task) {
+    res.status(404).json({ error: "Задача не найдена" });
+    return;
+  }
+  if (!canViewTask(req.user!, task)) {
+    res.status(403).json({ error: "Нет доступа" });
+    return;
+  }
+  markThreadRead("task", taskId, req.user!.id);
+  res.json({ messages: listMessages("task", taskId) });
+});
+
+router.post("/:id/messages", requireAuth, (req: AuthRequest, res) => {
+  const taskId = Number(req.params.id);
+  if (Number.isNaN(taskId)) {
+    res.status(400).json({ error: "Неверный ID задачи" });
+    return;
+  }
+  const parsed = messageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.errors[0].message });
+    return;
+  }
+  const task = getTaskById(taskId);
+  if (!task) {
+    res.status(404).json({ error: "Задача не найдена" });
+    return;
+  }
+  if (!canViewTask(req.user!, task)) {
+    res.status(403).json({ error: "Нет доступа" });
+    return;
+  }
+
+  const message = createMessage("task", taskId, req.user!.id, parsed.data.body);
+  const recipients = [
+    task.created_by,
+    ...task.assignees.map((a) => a.id),
+  ].filter((id) => id !== req.user!.id);
+
+  if (recipients.length > 0) {
+    void notifyUsers(
+      recipients,
+      "task_comments",
+      {
+        title: "Новое сообщение в задаче",
+        body: `«${task.title}»`,
+        url: `/tasks/t/${taskId}`,
+        tag: `task-msg-${taskId}`,
+      },
+      { priority: task.priority }
+    );
+  }
+
+  res.status(201).json({ message });
+});
+
+router.get("/:id", requireAuth, (req: AuthRequest, res) => {
+  const taskId = Number(req.params.id);
+  if (Number.isNaN(taskId)) {
+    res.status(400).json({ error: "Неверный ID задачи" });
+    return;
+  }
+  const task = getTaskById(taskId);
+  if (!task) {
+    res.status(404).json({ error: "Задача не найдена" });
+    return;
+  }
+  if (!canViewTask(req.user!, task)) {
+    res.status(403).json({ error: "Нет доступа" });
+    return;
+  }
+  res.json({
+    task: { ...task, chat: getChatIndicator("task", task.id, req.user!.id) },
   });
 });
 
@@ -223,6 +314,33 @@ router.post("/:id/start", requireAuth, (req: AuthRequest, res) => {
   res.json({ task: started });
 });
 
+router.post("/:id/restore", requireAuth, (req: AuthRequest, res) => {
+  const taskId = Number(req.params.id);
+  if (Number.isNaN(taskId)) {
+    res.status(400).json({ error: "Неверный ID задачи" });
+    return;
+  }
+
+  const task = getTaskById(taskId);
+  if (!task) {
+    res.status(404).json({ error: "Задача не найдена" });
+    return;
+  }
+
+  if (!canRestoreTask(req.user!, task)) {
+    res.status(403).json({ error: "Нет прав для восстановления этой задачи" });
+    return;
+  }
+
+  const restored = restoreTask(taskId);
+  if (!restored) {
+    res.status(400).json({ error: "Можно восстановить только просроченную завершённую задачу" });
+    return;
+  }
+
+  res.json({ task: restored });
+});
+
 router.patch("/:id", requireAuth, (req: AuthRequest, res) => {
   const taskId = Number(req.params.id);
   if (Number.isNaN(taskId)) {
@@ -291,8 +409,8 @@ router.patch("/:id", requireAuth, (req: AuthRequest, res) => {
     assigneeIds,
     is_shared,
     is_private,
-    due_at: due_at ?? null,
-    planned_for: planned_for ?? null,
+    ...(due_at !== undefined ? { due_at } : {}),
+    ...(planned_for !== undefined ? { planned_for } : {}),
   });
 
   if (updated) {

@@ -7,9 +7,19 @@ export type AuthUser = {
   permissions?: string[];
   canEditMap?: boolean;
   canEditShelves?: boolean;
+  /** Если true — правки полок только после «Подтвердить». */
+  requireShelfConfirm?: boolean;
 };
 
-export type ObjectType = "rack" | "wall" | "door" | "table" | "chair";
+export type ObjectType =
+  | "rack"
+  | "pallet"
+  | "zone"
+  | "wall"
+  | "window"
+  | "door"
+  | "table"
+  | "chair";
 
 export type RackTheme = "blue" | "black";
 
@@ -237,6 +247,70 @@ export function setShelfItemContents(
     method: "PUT",
     body: JSON.stringify({ items }),
   });
+}
+
+export type ShelfItemSnapshot = {
+  id?: number;
+  shelfIndex: number;
+  type: ShelfItemType;
+  widthRatio: number;
+  posX: number;
+  depthRow: number;
+  stackOrder: number;
+  title: string;
+  details: string;
+  quantity: string;
+  contents?: {
+    kind: CatalogKind;
+    refId: number;
+    nameSnapshot: string;
+    typeSnapshot?: string;
+    quantity?: string;
+  }[];
+};
+
+/** Полная замена содержимого полок стеллажа (для подтверждения черновика). */
+export function replaceRackItems(rackId: number, items: ShelfItemSnapshot[]) {
+  return requestJson<ShelfItem[]>(`/racks/${rackId}/items/replace`, {
+    method: "PUT",
+    body: JSON.stringify({ items }),
+  });
+}
+
+export type PalletItem = {
+  id: number;
+  palletId: number;
+  title: string;
+  details: string;
+  quantity: string;
+  kind: CatalogKind | null;
+  refId: number | null;
+  nameSnapshot: string;
+  typeSnapshot: string;
+  sortOrder: number;
+};
+
+export type PalletItemInput = {
+  title?: string;
+  details?: string;
+  quantity?: string;
+  kind?: CatalogKind | null;
+  refId?: number | null;
+  nameSnapshot?: string;
+  typeSnapshot?: string;
+};
+
+export function listPalletItems(palletId: number) {
+  return requestJson<{ items: PalletItem[] }>(`/pallets/${palletId}/items`).then(
+    (res) => res.items,
+  );
+}
+
+export function setPalletItems(palletId: number, items: PalletItemInput[]) {
+  return requestJson<{ items: PalletItem[] }>(`/pallets/${palletId}/items`, {
+    method: "PUT",
+    body: JSON.stringify({ items }),
+  }).then((res) => res.items);
 }
 
 export function searchWarehouse(q: string) {

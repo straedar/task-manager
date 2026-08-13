@@ -6,6 +6,15 @@ import { Modal } from "./Modal";
 import { CheckboxIndicator } from "./CheckboxIndicator";
 import { PriorityToggle } from "./PriorityToggle";
 import { AssigneePicker } from "./AssigneePicker";
+import { DeadlineField } from "./DeadlineField";
+import {
+  isPastMoscowDay,
+  moscowDateKey,
+  moscowDateKeyFromIso,
+  moscowDateTimeIso,
+  moscowTimeFromIso,
+} from "../utils/moscow";
+import { formatDayHeading } from "../utils/date";
 
 interface EditTaskDialogProps {
   task: Task;
@@ -26,6 +35,9 @@ export function EditTaskDialog({ task, open, onClose, onSaved }: EditTaskDialogP
   const [isShared, setIsShared] = useState(task.is_shared);
   const [isPrivate, setIsPrivate] = useState(task.is_private);
   const [assigneeIds, setAssigneeIds] = useState(task.assignees.map((a) => a.id));
+  const [hasDeadline, setHasDeadline] = useState(Boolean(task.due_at));
+  const [deadlineDate, setDeadlineDate] = useState(() => moscowDateKey());
+  const [deadlineTime, setDeadlineTime] = useState("18:00");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -45,6 +57,13 @@ export function EditTaskDialog({ task, open, onClose, onSaved }: EditTaskDialogP
     setIsShared(task.is_shared);
     setIsPrivate(task.is_private);
     setAssigneeIds(task.assignees.map((a) => a.id));
+    setHasDeadline(Boolean(task.due_at));
+    setDeadlineDate(
+      (task.due_at && moscowDateKeyFromIso(task.due_at)) ||
+        task.planned_for ||
+        moscowDateKey()
+    );
+    setDeadlineTime(moscowTimeFromIso(task.due_at, "18:00"));
     setError("");
     api.getAssignableUsers().then(({ users, has_subordinates }) => {
       setHasSubordinates(has_subordinates);
@@ -91,6 +110,29 @@ export function EditTaskDialog({ task, open, onClose, onSaved }: EditTaskDialogP
     setError("");
     setLoading(true);
     try {
+      const prevDeadlineDay = task.due_at
+        ? moscowDateKeyFromIso(task.due_at)
+        : null;
+      if (
+        hasDeadline &&
+        isPastMoscowDay(deadlineDate) &&
+        deadlineDate !== prevDeadlineDay
+      ) {
+        setError("Нельзя указать прошедший день дедлайна");
+        setLoading(false);
+        return;
+      }
+      const dueAt = hasDeadline
+        ? moscowDateTimeIso(deadlineDate, deadlineTime)
+        : null;
+      if (dueAt && new Date(dueAt).getTime() < Date.now()) {
+        const sameAsBefore = task.due_at && dueAt === task.due_at;
+        if (!sameAsBefore) {
+          setError("Дедлайн не может быть в прошлом");
+          setLoading(false);
+          return;
+        }
+      }
       await api.updateTask(task.id, {
         title,
         description,
@@ -98,6 +140,8 @@ export function EditTaskDialog({ task, open, onClose, onSaved }: EditTaskDialogP
         assigneeIds: isShared ? users.map((u) => u.id) : assigneeIds,
         is_shared: isShared,
         is_private: assignedOnlyToCreator && isPrivate,
+        due_at: dueAt,
+        planned_for: task.planned_for,
       });
       onClose();
       onSaved();
@@ -138,6 +182,26 @@ export function EditTaskDialog({ task, open, onClose, onSaved }: EditTaskDialogP
           <span className="mb-1.5 block text-sm font-medium text-gray-700">Приоритет</span>
           <PriorityToggle value={priority} onChange={setPriority} />
         </div>
+
+        {task.planned_for && (
+          <div className="rounded-2xl border border-orange-100 bg-orange-50/70 px-4 py-3 text-sm text-orange-800">
+            День в планировщике:{" "}
+            <span className="font-semibold">
+              {formatDayHeading(task.planned_for)}
+            </span>
+          </div>
+        )}
+
+        <DeadlineField
+          enabled={hasDeadline}
+          dateKey={deadlineDate}
+          onEnabledChange={setHasDeadline}
+          onDateChange={setDeadlineDate}
+          time={deadlineTime}
+          onTimeChange={setDeadlineTime}
+          enabledLabel="Со сроком"
+          disabledLabel="Без срока"
+        />
 
         <label
           className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 shadow-sm transition ${

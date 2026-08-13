@@ -91,11 +91,11 @@ export function useTaskPolling(enabled: boolean) {
   const handleToggleChecklistItem = async (
     checklistId: number,
     itemId: number,
-    completed: boolean
+    payload: boolean | { action: "claim" | "complete" | "uncomplete" }
   ) => {
     setActingChecklistId(checklistId);
     try {
-      await api.toggleChecklistItem(checklistId, itemId, completed);
+      await api.toggleChecklistItem(checklistId, itemId, payload);
       await refresh(true);
     } finally {
       setActingChecklistId(null);

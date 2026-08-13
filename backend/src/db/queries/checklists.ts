@@ -20,14 +20,33 @@ function getUser(id: number): UserPublic {
 }
 
 function getItems(checklistId: number): ChecklistItem[] {
-  return getDb()
+  const rows = getDb()
     .prepare(
-      `SELECT id, checklist_id, title, position, completed_at
+      `SELECT id, checklist_id, title, position, completed_at, claimed_by, claimed_at
        FROM checklist_items
        WHERE checklist_id = ?
        ORDER BY position ASC, id ASC`
     )
-    .all(checklistId) as unknown as ChecklistItem[];
+    .all(checklistId) as {
+    id: number;
+    checklist_id: number;
+    title: string;
+    position: number;
+    completed_at: string | null;
+    claimed_by: number | null;
+    claimed_at: string | null;
+  }[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    checklist_id: row.checklist_id,
+    title: row.title,
+    position: row.position,
+    completed_at: row.completed_at,
+    claimed_by: row.claimed_by ?? null,
+    claimed_at: row.claimed_at ?? null,
+    claimant: row.claimed_by ? getUser(row.claimed_by) : null,
+  }));
 }
 
 type ChecklistRow = {
@@ -42,6 +61,7 @@ type ChecklistRow = {
   completed_at: string | null;
   auto_completed: number;
   is_private?: number;
+  is_shared?: number;
 };
 
 function enrich(row: ChecklistRow): ChecklistWithDetails {
@@ -57,6 +77,7 @@ function enrich(row: ChecklistRow): ChecklistWithDetails {
     completed_at: row.completed_at,
     auto_completed: Boolean(row.auto_completed),
     is_private: Boolean(row.is_private),
+    is_shared: Boolean(row.is_shared),
     items: getItems(row.id),
     creator: getUser(row.created_by),
     assignee: getUser(row.assignee_id),
@@ -86,9 +107,15 @@ export function createChecklist(data: {
   planned_for?: string | null;
   expires_at?: string | null;
   is_private?: boolean;
+  is_shared?: boolean;
 }): ChecklistWithDetails {
   const db = getDb();
-  const planned_for = data.planned_for ?? (data.has_deadline ? moscowDateKey() : null);
+  const planned_for =
+    data.planned_for !== undefined
+      ? data.planned_for
+      : data.has_deadline
+        ? moscowDateKey()
+        : null;
   const expires_at = !data.has_deadline
     ? null
     : data.expires_at
@@ -98,8 +125,8 @@ export function createChecklist(data: {
         : moscowDeadlineIso();
   const result = db
     .prepare(
-      `INSERT INTO checklists (title, created_by, assignee_id, status, expires_at, planned_for, is_private)
-       VALUES (?, ?, ?, 'open', ?, ?, ?)`
+      `INSERT INTO checklists (title, created_by, assignee_id, status, expires_at, planned_for, is_private, is_shared)
+       VALUES (?, ?, ?, 'open', ?, ?, ?, ?)`
     )
     .run(
       data.title,
@@ -107,7 +134,8 @@ export function createChecklist(data: {
       data.assignee_id,
       expires_at,
       planned_for,
-      data.is_private ? 1 : 0
+      data.is_private ? 1 : 0,
+      data.is_shared ? 1 : 0
     );
 
   const checklistId = Number(result.lastInsertRowid);
@@ -137,6 +165,7 @@ export function updateChecklist(
     planned_for?: string | null;
     expires_at?: string | null;
     is_private?: boolean;
+    is_shared?: boolean;
   }
 ): ChecklistWithDetails | null {
   const existing = getChecklistById(checklistId);
@@ -149,21 +178,31 @@ export function updateChecklist(
   let expires_at: string | null = existing.expires_at;
   if (!data.has_deadline) {
     expires_at = null;
-  } else if (data.expires_at !== undefined && data.expires_at !== null) {
-    expires_at = data.expires_at;
-  } else if (planned_for) {
-    expires_at = moscowDeadlineIsoFromKey(planned_for);
-  } else if (!expires_at) {
-    expires_at = moscowDeadlineIso(parseCreatedAt(existing.created_at));
+  } else if (data.expires_at !== undefined) {
+    // Explicit value from client (including null → fall back below)
+    expires_at =
+      data.expires_at ??
+      (planned_for
+        ? moscowDeadlineIsoFromKey(planned_for)
+        : existing.expires_at ??
+          moscowDeadlineIso(parseCreatedAt(existing.created_at)));
+  }
+  // If has_deadline and expires_at omitted — keep existing (or derive once if missing)
+  else if (!expires_at) {
+    expires_at = planned_for
+      ? moscowDeadlineIsoFromKey(planned_for)
+      : moscowDeadlineIso(parseCreatedAt(existing.created_at));
   }
 
   const is_private = data.is_private ? 1 : 0;
+  const is_shared =
+    data.is_shared !== undefined ? (data.is_shared ? 1 : 0) : existing.is_shared ? 1 : 0;
 
   db.prepare(
     `UPDATE checklists
-     SET title = ?, assignee_id = ?, expires_at = ?, planned_for = ?, is_private = ?
+     SET title = ?, assignee_id = ?, expires_at = ?, planned_for = ?, is_private = ?, is_shared = ?
      WHERE id = ?`
-  ).run(data.title, data.assignee_id, expires_at, planned_for, is_private, checklistId);
+  ).run(data.title, data.assignee_id, expires_at, planned_for, is_private, is_shared, checklistId);
 
   const incomingIds = new Set(
     data.items.map((item) => item.id).filter((id): id is number => typeof id === "number")
@@ -199,7 +238,10 @@ export function updateChecklist(
   const anyOpen = updated.items.some((item) => !item.completed_at);
 
   if (allDone && updated.status === "open") {
-    return completeChecklist(checklistId, false);
+    // Past-due checklists must not success-close via edit.
+    if (!isChecklistPastDue(updated)) {
+      return completeChecklist(checklistId, false);
+    }
   }
 
   if (anyOpen && updated.status === "completed") {
@@ -214,6 +256,16 @@ export function updateChecklist(
   return updated;
 }
 
+/** Past deadline — items must not be toggled / success-closed. */
+export function isChecklistPastDue(
+  checklist: { status: string; expires_at: string | null },
+  now = new Date()
+): boolean {
+  if (checklist.status !== "open" || !checklist.expires_at) return false;
+  const due = Date.parse(checklist.expires_at);
+  return Number.isFinite(due) && due <= now.getTime();
+}
+
 export function setChecklistItemCompleted(
   checklistId: number,
   itemId: number,
@@ -221,6 +273,7 @@ export function setChecklistItemCompleted(
 ): ChecklistWithDetails | null {
   const checklist = getChecklistById(checklistId);
   if (!checklist || checklist.status !== "open") return null;
+  if (isChecklistPastDue(checklist)) return null;
 
   const item = checklist.items.find((i) => i.id === itemId);
   if (!item) return null;
@@ -233,11 +286,87 @@ export function setChecklistItemCompleted(
     )
     .run(completed ? 1 : 0, itemId, checklistId);
 
-  const updated = getChecklistById(checklistId)!;
+  return finalizeChecklistIfDone(checklistId);
+}
+
+/** Взять свободный пункт общего чеклиста в работу. */
+export function claimChecklistItem(
+  checklistId: number,
+  itemId: number,
+  userId: number
+): ChecklistWithDetails | null {
+  const checklist = getChecklistById(checklistId);
+  if (!checklist || !checklist.is_shared || checklist.status !== "open") return null;
+  if (isChecklistPastDue(checklist)) return null;
+
+  const item = checklist.items.find((i) => i.id === itemId);
+  if (!item || item.completed_at || item.claimed_by) return null;
+
+  const result = getDb()
+    .prepare(
+      `UPDATE checklist_items
+       SET claimed_by = ?, claimed_at = datetime('now')
+       WHERE id = ? AND checklist_id = ? AND claimed_by IS NULL AND completed_at IS NULL`
+    )
+    .run(userId, itemId, checklistId);
+
+  if (result.changes === 0) return null;
+  return getChecklistById(checklistId);
+}
+
+/** Завершить пункт (обычный или взятый в работу). */
+export function completeChecklistItem(
+  checklistId: number,
+  itemId: number
+): ChecklistWithDetails | null {
+  const checklist = getChecklistById(checklistId);
+  if (!checklist || checklist.status !== "open") return null;
+  if (isChecklistPastDue(checklist)) return null;
+
+  const item = checklist.items.find((i) => i.id === itemId);
+  if (!item || item.completed_at) return null;
+  if (checklist.is_shared && !item.claimed_by) return null;
+
+  getDb()
+    .prepare(
+      `UPDATE checklist_items
+       SET completed_at = datetime('now')
+       WHERE id = ? AND checklist_id = ? AND completed_at IS NULL`
+    )
+    .run(itemId, checklistId);
+
+  return finalizeChecklistIfDone(checklistId);
+}
+
+/** Снять выполнение о выполнении (пункт остаётся взятым, если был). */
+export function uncompleteChecklistItem(
+  checklistId: number,
+  itemId: number
+): ChecklistWithDetails | null {
+  const checklist = getChecklistById(checklistId);
+  if (!checklist || checklist.status !== "open") return null;
+  if (isChecklistPastDue(checklist)) return null;
+
+  const item = checklist.items.find((i) => i.id === itemId);
+  if (!item || !item.completed_at) return null;
+
+  getDb()
+    .prepare(
+      `UPDATE checklist_items
+       SET completed_at = NULL
+       WHERE id = ? AND checklist_id = ?`
+    )
+    .run(itemId, checklistId);
+
+  return getChecklistById(checklistId);
+}
+
+function finalizeChecklistIfDone(checklistId: number): ChecklistWithDetails | null {
+  const updated = getChecklistById(checklistId);
+  if (!updated) return null;
   if (updated.items.length > 0 && updated.items.every((i) => i.completed_at)) {
     return completeChecklist(checklistId, false);
   }
-
   return updated;
 }
 
@@ -247,6 +376,8 @@ export function completeChecklist(
 ): ChecklistWithDetails | null {
   const checklist = getChecklistById(checklistId);
   if (!checklist || checklist.status !== "open") return null;
+  // Success close is forbidden after the deadline; auto-fail close remains allowed.
+  if (!autoCompleted && isChecklistPastDue(checklist)) return null;
 
   getDb()
     .prepare(
@@ -264,6 +395,38 @@ export function completeChecklist(
 /** Previously auto-closed past-due checklists; deadlines now leave them open as overdue. */
 export function expireDueChecklists(_now = new Date()): number {
   return 0;
+}
+
+/** Вернуть проваленный/просроченный чеклист в активные. */
+export function restoreChecklist(checklistId: number): ChecklistWithDetails | null {
+  const db = getDb();
+  const checklist = getChecklistById(checklistId);
+  if (!checklist) return null;
+
+  const incompleteClose =
+    checklist.status === "completed" &&
+    (checklist.auto_completed || checklist.items.some((i) => !i.completed_at));
+  const openOverdue = isChecklistPastDue(checklist);
+
+  if (!incompleteClose && !openOverdue) return null;
+
+  if (incompleteClose) {
+    db.prepare(
+      `UPDATE checklists
+       SET status = 'open', completed_at = NULL, auto_completed = 0
+       WHERE id = ?`
+    ).run(checklistId);
+  }
+
+  const next = getChecklistById(checklistId);
+  if (!next) return null;
+
+  // Если срок уже прошёл — снимаем дедлайн, иначе снова «заморожен».
+  if (isChecklistPastDue(next) || (next.expires_at && Date.parse(next.expires_at) <= Date.now())) {
+    db.prepare(`UPDATE checklists SET expires_at = NULL WHERE id = ?`).run(checklistId);
+  }
+
+  return getChecklistById(checklistId);
 }
 
 export function deleteChecklist(id: number): boolean {

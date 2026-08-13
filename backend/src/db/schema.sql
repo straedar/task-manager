@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS checklists (
   planned_for TEXT,
   completed_at TEXT,
   auto_completed INTEGER NOT NULL DEFAULT 0,
-  is_private INTEGER NOT NULL DEFAULT 0
+  is_private INTEGER NOT NULL DEFAULT 0,
+  is_shared INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS checklist_items (
@@ -86,7 +87,9 @@ CREATE TABLE IF NOT EXISTS checklist_items (
   checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   position INTEGER NOT NULL DEFAULT 0,
-  completed_at TEXT
+  completed_at TEXT,
+  claimed_by INTEGER REFERENCES users(id),
+  claimed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_checklists_status ON checklists(status);
@@ -158,6 +161,7 @@ CREATE TABLE IF NOT EXISTS reference_component_products (
   component_id INTEGER NOT NULL REFERENCES reference_components(id) ON DELETE CASCADE,
   product_id INTEGER NOT NULL REFERENCES reference_products(id) ON DELETE CASCADE,
   display_as TEXT NOT NULL DEFAULT 'tag' CHECK (display_as IN ('name', 'tag')),
+  quantity INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (component_id, product_id)
 );
 
@@ -171,6 +175,7 @@ CREATE TABLE IF NOT EXISTS news_posts (
   title TEXT NOT NULL,
   body_html TEXT NOT NULL DEFAULT '',
   author_id INTEGER NOT NULL REFERENCES users(id),
+  channel TEXT NOT NULL DEFAULT 'company' CHECK (channel IN ('company', 'warehouse', 'patch')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -203,3 +208,54 @@ CREATE TABLE IF NOT EXISTS notification_prefs (
   prefs_json TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS password_restore_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_restore_user ON password_restore_codes(user_id);
+
+CREATE TABLE IF NOT EXISTS item_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL CHECK (kind IN ('task', 'checklist')),
+  ref_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_messages_thread ON item_messages(kind, ref_id, id);
+
+CREATE TABLE IF NOT EXISTS item_message_reads (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('task', 'checklist')),
+  ref_id INTEGER NOT NULL,
+  last_read_message_id INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, kind, ref_id)
+);
+
+CREATE TABLE IF NOT EXISTS feedback_batches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS feedback_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL REFERENCES feedback_batches(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('problem', 'improvement')),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_batches_author ON feedback_batches(author_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_batches_created ON feedback_batches(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_items_batch ON feedback_items(batch_id, sort_order);

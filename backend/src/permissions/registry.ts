@@ -120,6 +120,10 @@ export const FEATURE_APPS: FeatureAppDef[] = [
         label: "Редактирование полок",
         defaultFor: ["employee", "warehouse_manager"],
       },
+      {
+        code: "stockmap.require_shelf_confirm",
+        label: "Подтверждать изменения полок перед сохранением",
+      },
     ],
   },
   {

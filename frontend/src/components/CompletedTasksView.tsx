@@ -15,7 +15,11 @@ interface CompletedTasksViewProps {
   onStart: (id: number) => void;
   onComplete: (id: number) => void;
   onDelete: (id: number) => void;
-  onToggleChecklistItem: (checklistId: number, itemId: number, completed: boolean) => void;
+  onToggleChecklistItem: (
+    checklistId: number,
+    itemId: number,
+    payload: boolean | { action: "claim" | "complete" | "uncomplete" }
+  ) => void;
   onDeleteChecklist: (id: number) => void;
   onUpdated: () => void;
   actingId?: number | null;
@@ -92,6 +96,9 @@ function collectActiveDays(
   for (const checklist of checklists) {
     add(checklist.created_at);
     add(checklist.completed_at);
+    if (checklist.status === "open" && checklist.expires_at) {
+      add(checklist.expires_at);
+    }
   }
   return days;
 }
@@ -136,11 +143,12 @@ export function CompletedTasksView({
 
     for (const checklist of checklists) {
       if (!matchesChecklistSearch(checklist, query)) continue;
-      if (!matchesDayFilter(checklist.created_at, checklist.completed_at, dateFilter)) continue;
+      const stamp = checklist.completed_at ?? checklist.expires_at;
+      if (!matchesDayFilter(checklist.created_at, stamp, dateFilter)) continue;
       items.push({
         kind: "checklist",
         key: `checklist-${checklist.id}`,
-        at: checklist.completed_at ?? checklist.created_at,
+        at: stamp ?? checklist.created_at,
         checklist,
       });
     }
