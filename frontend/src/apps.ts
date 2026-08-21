@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   BookOpen,
+  Boxes,
   ClipboardList,
   Factory,
   Map,
@@ -15,6 +16,7 @@ import type { PermissionCode } from "./types";
 export const HUB_ICONS: Record<string, LucideIcon> = {
   Zap,
   Map,
+  Boxes,
   Network,
   Shield,
   BookOpen,
@@ -62,11 +64,13 @@ export function hubAppsFromDto(apps: HubAppDto[]): MiniAppDef[] {
 }
 
 export const STOCKMAP_EMBED_URL = "/stockmap-app/";
+export const FLOORPLAN_3D_EMBED_URL = "/floorplan-3d-app/";
 
 /** @deprecated Prefer hub apps from API; kept for ComingSoon stubs. */
 export type AppId =
   | "tasks"
   | "stockmap"
+  | "floorplan3d"
   | "structure"
   | "administration"
   | "reference"

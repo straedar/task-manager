@@ -9,6 +9,7 @@ import { AdminPage } from "./pages/AdminPage";
 import { IdeasPage } from "./pages/IdeasPage";
 import { PlannerPage } from "./pages/PlannerPage";
 import { StockmapPage } from "./pages/StockmapPage";
+import { Floorplan3dPage } from "./pages/Floorplan3dPage";
 import { ComingSoonPage } from "./pages/ComingSoonPage";
 import { ReferencePage } from "./pages/ReferencePage";
 import { NewsFeedPage } from "./pages/NewsFeedPage";
@@ -45,6 +46,7 @@ export default function App() {
               <Route path="/administration" element={<AdminPage />} />
               <Route path="/structure" element={<StructurePage />} />
               <Route path="/stockmap" element={<StockmapPage />} />
+              <Route path="/floorplan-3d" element={<Floorplan3dPage />} />
               <Route path="/reference" element={<ReferencePage />} />
               <Route path="/news" element={<NewsFeedPage />} />
               <Route path="/news/new" element={<NewsEditorPage />} />

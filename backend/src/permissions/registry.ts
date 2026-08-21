@@ -127,6 +127,25 @@ export const FEATURE_APPS: FeatureAppDef[] = [
     ],
   },
   {
+    id: "floorplan3d",
+    title: "3Д карта склада",
+    description: "План этажа в 3D: стены, стеллажи и коробки",
+    hub: {
+      path: "/floorplan-3d",
+      status: "live",
+      accent: "from-indigo-500 to-blue-400",
+      icon: "Boxes",
+    },
+    defaultFor: ["employee", "warehouse_manager"],
+    permissions: [
+      {
+        code: "floorplan3d.view",
+        label: "Просмотр 3Д карты",
+        defaultFor: ["employee", "warehouse_manager"],
+      },
+    ],
+  },
+  {
     id: "structure",
     title: "Структура",
     description: "Список сотрудников и их профили",

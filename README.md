@@ -8,6 +8,7 @@
 |--------|------|--------|
 | Менеджер задач | `/tasks` | live |
 | Карта склада | `/stockmap` → `/stockmap-app/` | live |
+| 3Д карта склада | `/floorplan-3d` → `/floorplan-3d-app/` | live |
 | Справочник | `/reference` | live |
 | Новости | `/news` | live |
 | Заказы | `/apps/orders` | заглушка |
@@ -20,9 +21,10 @@
 
 ```
 task-manager/
-├── backend/     Express + SQLite (задачи, auth)
-├── frontend/    Vite + React + Tailwind (хаб + Task Manager)
-└── stockmap/    Fastify + Konva (карта склада)
+├── backend/       Express + SQLite (задачи, auth)
+├── frontend/      Vite + React + Tailwind (хаб + Task Manager)
+├── stockmap/      Fastify + Konva (карта склада)
+└── floorplan-3d/  Vite + Three.js (3Д план склада)
 ```
 
 ## Требования
@@ -61,6 +63,14 @@ npm run dev:server   # :3002
 # отдельно при необходимости: npm run build && serve dist
 ```
 
+### 3Д карта склада
+
+```bash
+cd floorplan-3d
+npm install
+npm run dev          # :5175, base `/floorplan-3d-app/`
+```
+
 Тестовый вход TaskMaster: `admin` / `admin123` (см. seed).
 
 ## Деплой
@@ -69,4 +79,4 @@ npm run dev:server   # :3002
 python deploy.py
 ```
 
-Поднимает `task-manager-api` (3001), `stockmap-api` (3003), nginx отдаёт хаб и `/stockmap-app/`.
+Поднимает `task-manager-api` (3001), `stockmap-api` (3003), nginx отдаёт хаб, `/stockmap-app/` и `/floorplan-3d-app/`.

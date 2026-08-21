@@ -15,6 +15,31 @@ const db = new DatabaseSync(join(dataDir, "stockmap.db"));
 db.exec("PRAGMA journal_mode = WAL;");
 db.exec("PRAGMA foreign_keys = ON;");
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS map_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+`);
+
+const floorDir = join(dataDir, "floor");
+mkdirSync(floorDir, { recursive: true });
+const floorFilePath = join(floorDir, "cover");
+
+function getMapSetting(key: string, fallback = ""): string {
+  const row = db
+    .prepare(`SELECT value FROM map_settings WHERE key = ?`)
+    .get(key) as { value: string } | undefined;
+  return row?.value ?? fallback;
+}
+
+function setMapSetting(key: string, value: string) {
+  db.prepare(
+    `INSERT INTO map_settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  ).run(key, value);
+}
+
 function withTransaction<T>(fn: () => T): T {
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -311,7 +336,10 @@ app.addHook("preHandler", async (request, reply) => {
   const mapWrite =
     method !== "GET" &&
     method !== "HEAD" &&
-    (path === "/api/objects" || path.startsWith("/api/objects/"));
+    (path === "/api/objects" ||
+      path.startsWith("/api/objects/") ||
+      path === "/api/map-settings" ||
+      path.startsWith("/api/map-settings/"));
   if (mapWrite && !request.user!.canEditMap) {
     return reply
       .code(403)
@@ -332,6 +360,129 @@ app.addHook("preHandler", async (request, reply) => {
 app.get("/api/objects", async () => {
   const rows = listStmt.all() as ObjectRow[];
   return rows.map(mapObject);
+});
+
+app.get("/api/map-settings", async () => {
+  const floorMime = getMapSetting("floor_mime", "");
+  const rev = getMapSetting("floor_rev", "0");
+  return {
+    wallHeightM: Number(getMapSetting("wall_height_m", "3.6")) || 3.6,
+    rackHeightM: Number(getMapSetting("rack_height_m", "2.7")) || 2.7,
+    windowSillM: Number(getMapSetting("window_sill_m", "0.9")) || 0.9,
+    windowHeightM: Number(getMapSetting("window_height_m", "1.5")) || 1.5,
+    hasFloorTexture: Boolean(floorMime),
+    floorUrl: floorMime
+      ? `/stockmap-api/map-settings/floor?v=${encodeURIComponent(rev)}`
+      : null,
+  };
+});
+
+app.put<{
+  Body: {
+    wallHeightM?: number;
+    rackHeightM?: number;
+    windowSillM?: number;
+    windowHeightM?: number;
+  };
+}>("/api/map-settings", async (request, reply) => {
+  const body = request.body ?? {};
+  const clampH = (n: unknown, min: number, max: number, fallback: number) => {
+    const v = typeof n === "number" && Number.isFinite(n) ? n : fallback;
+    return Math.min(max, Math.max(min, v));
+  };
+  if (body.wallHeightM != null) {
+    setMapSetting(
+      "wall_height_m",
+      String(clampH(body.wallHeightM, 1.5, 8, 3.6)),
+    );
+  }
+  if (body.rackHeightM != null) {
+    setMapSetting(
+      "rack_height_m",
+      String(clampH(body.rackHeightM, 1.2, 6, 2.7)),
+    );
+  }
+  if (body.windowSillM != null) {
+    setMapSetting(
+      "window_sill_m",
+      String(clampH(body.windowSillM, 0.1, 2.5, 0.9)),
+    );
+  }
+  if (body.windowHeightM != null) {
+    setMapSetting(
+      "window_height_m",
+      String(clampH(body.windowHeightM, 0.3, 3, 1.5)),
+    );
+  }
+  const floorMime = getMapSetting("floor_mime", "");
+  const rev = getMapSetting("floor_rev", "0");
+  return {
+    wallHeightM: Number(getMapSetting("wall_height_m", "3.6")) || 3.6,
+    rackHeightM: Number(getMapSetting("rack_height_m", "2.7")) || 2.7,
+    windowSillM: Number(getMapSetting("window_sill_m", "0.9")) || 0.9,
+    windowHeightM: Number(getMapSetting("window_height_m", "1.5")) || 1.5,
+    hasFloorTexture: Boolean(floorMime),
+    floorUrl: floorMime
+      ? `/stockmap-api/map-settings/floor?v=${encodeURIComponent(rev)}`
+      : null,
+  };
+});
+
+app.get("/api/map-settings/floor", async (_request, reply) => {
+  const mime = getMapSetting("floor_mime", "");
+  if (!mime) {
+    return reply.code(404).send({ error: "Текстура пола не задана" });
+  }
+  try {
+    const { readFileSync } = await import("node:fs");
+    const buf = readFileSync(floorFilePath);
+    return reply.type(mime).send(buf);
+  } catch {
+    return reply.code(404).send({ error: "Файл текстуры не найден" });
+  }
+});
+
+app.post<{
+  Body: { mime?: string; dataBase64?: string };
+}>("/api/map-settings/floor", async (request, reply) => {
+  const mime = String(request.body?.mime ?? "").trim();
+  const dataBase64 = String(request.body?.dataBase64 ?? "");
+  const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+  if (!allowed.has(mime) || !dataBase64) {
+    return reply
+      .code(400)
+      .send({ error: "Нужен JPEG/PNG/WebP в dataBase64" });
+  }
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(dataBase64, "base64");
+  } catch {
+    return reply.code(400).send({ error: "Некорректный base64" });
+  }
+  if (buf.length < 32 || buf.length > 2.5 * 1024 * 1024) {
+    return reply.code(400).send({ error: "Размер текстуры: до 2.5 МБ" });
+  }
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(floorFilePath, buf);
+  setMapSetting("floor_mime", mime);
+  setMapSetting("floor_rev", String(Date.now()));
+  const rev = getMapSetting("floor_rev", "0");
+  return {
+    ok: true,
+    floorUrl: `/stockmap-api/map-settings/floor?v=${encodeURIComponent(rev)}`,
+  };
+});
+
+app.delete("/api/map-settings/floor", async () => {
+  try {
+    const { unlinkSync } = await import("node:fs");
+    unlinkSync(floorFilePath);
+  } catch {
+    /* ignore */
+  }
+  setMapSetting("floor_mime", "");
+  setMapSetting("floor_rev", String(Date.now()));
+  return { ok: true };
 });
 
 // Совместимость со старым клиентом

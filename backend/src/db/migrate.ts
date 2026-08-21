@@ -89,6 +89,7 @@ export function migrate(db: DatabaseSync) {
   migrateRoles(db);
   migrateReference(db);
   migrateCatalogReadForStockmap(db);
+  migrateFloorplan3dFromStockmap(db);
   migrateNewsOwnPermissions(db);
   migrateNewsPatchTables(db);
   migrateNewsChannels(db);
@@ -264,6 +265,22 @@ function migrateCatalogReadForStockmap(db: DatabaseSync) {
   db.exec(`
     INSERT OR IGNORE INTO role_permissions (role_id, permission)
     SELECT DISTINCT role_id, 'reference.catalog.read'
+    FROM role_permissions
+    WHERE permission IN ('stockmap.view', 'app.stockmap')
+  `);
+}
+
+/** Grant 3D floorplan access to roles that already have the 2D warehouse map. */
+function migrateFloorplan3dFromStockmap(db: DatabaseSync) {
+  db.exec(`
+    INSERT OR IGNORE INTO role_permissions (role_id, permission)
+    SELECT DISTINCT role_id, 'app.floorplan3d'
+    FROM role_permissions
+    WHERE permission IN ('stockmap.view', 'app.stockmap')
+  `);
+  db.exec(`
+    INSERT OR IGNORE INTO role_permissions (role_id, permission)
+    SELECT DISTINCT role_id, 'floorplan3d.view'
     FROM role_permissions
     WHERE permission IN ('stockmap.view', 'app.stockmap')
   `);

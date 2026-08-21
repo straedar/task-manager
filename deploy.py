@@ -158,6 +158,15 @@ pm2 delete stockmap-api 2>/dev/null || true
 pm2 start ecosystem.config.cjs
 pm2 save
 
+# --- 3D floorplan mini-app (prefer prebuilt dist; VPS may OOM on vite+three) ---
+cd {REMOTE_DIR}/floorplan-3d
+if [ ! -f dist/index.html ]; then
+  npm install
+  NODE_OPTIONS=--max-old-space-size=3072 npm run build
+else
+  echo "Using prebuilt floorplan-3d/dist"
+fi
+
 pm2 delete task-manager-api 2>/dev/null || true
 cd {REMOTE_DIR}/backend
 pm2 start dist/index.js --name task-manager-api
@@ -223,6 +232,16 @@ server {{
         add_header Cache-Control "no-cache, no-store, must-revalidate";
     }}
 
+    location /floorplan-3d-app/ {{
+        alias {REMOTE_DIR}/floorplan-3d/dist/;
+        index index.html;
+    }}
+
+    location = /floorplan-3d-app/index.html {{
+        alias {REMOTE_DIR}/floorplan-3d/dist/index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }}
+
     location = /sw.js {{
         add_header Cache-Control "no-cache, no-store, must-revalidate";
         add_header Service-Worker-Allowed "/";
@@ -282,6 +301,11 @@ server {{
         index index.html;
     }}
 
+    location /floorplan-3d-app/ {{
+        alias {REMOTE_DIR}/floorplan-3d/dist/;
+        index index.html;
+    }}
+
     location = /sw.js {{
         add_header Cache-Control "no-cache, no-store, must-revalidate";
         add_header Service-Worker-Allowed "/";
@@ -338,7 +362,12 @@ def should_skip(path: Path, root: Path) -> bool:
     rel = path.relative_to(root)
     parts = rel.parts
     for i, p in enumerate(parts):
-        if p in {"node_modules", ".git", "dist", "data", "__pycache__"}:
+        if p in {"node_modules", ".git", "data", "__pycache__"}:
+            return True
+        # Ship prebuilt floorplan-3d — VPS OOMs on vite+three build
+        if p == "dist":
+            if parts[:1] == ("floorplan-3d",):
+                continue
             return True
         # Runtime avatar storage — not backend/src/uploads (source)
         if p == "uploads" and "src" not in parts[:i]:
@@ -409,6 +438,11 @@ def main() -> int:
           cp -a {REMOTE_DIR}/backend/data /tmp/task-manager-data-backup
           echo "Database backed up"
         fi
+        # Legacy path if uploads ever lived outside data/
+        if [ -d {REMOTE_DIR}/backend/uploads ]; then
+          cp -a {REMOTE_DIR}/backend/uploads /tmp/task-manager-uploads-backup
+          echo "Uploads backed up"
+        fi
         if [ -d {REMOTE_DIR}/stockmap/data ]; then
           cp -a {REMOTE_DIR}/stockmap/data /tmp/stockmap-data-backup
           echo "Stockmap data backed up"
@@ -437,6 +471,14 @@ def main() -> int:
           cp -a /tmp/task-manager-data-backup {REMOTE_DIR}/backend/data
           rm -rf /tmp/task-manager-data-backup
           echo "Database restored"
+        fi
+        if [ -d /tmp/task-manager-uploads-backup ]; then
+          mkdir -p {REMOTE_DIR}/backend
+          # Prefer data/uploads; merge legacy backup if needed
+          mkdir -p {REMOTE_DIR}/backend/data/uploads
+          cp -a /tmp/task-manager-uploads-backup/. {REMOTE_DIR}/backend/data/uploads/
+          rm -rf /tmp/task-manager-uploads-backup
+          echo "Uploads restored into data/uploads"
         fi
         if [ -d /tmp/stockmap-data-backup ]; then
           mkdir -p {REMOTE_DIR}/stockmap

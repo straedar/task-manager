@@ -4,6 +4,7 @@
   "scripts": {
     "dev:backend": "npm run dev --prefix backend",
     "dev:frontend": "npm run dev --prefix frontend",
-    "install:all": "npm install --prefix backend && npm install --prefix frontend"
+    "dev:floorplan3d": "npm run dev --prefix floorplan-3d",
+    "install:all": "npm install --prefix backend && npm install --prefix frontend && npm install --prefix stockmap && npm install --prefix floorplan-3d"
   }
 }

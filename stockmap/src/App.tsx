@@ -49,9 +49,9 @@ type ShelfDropTarget = {
 
 const MAX_SHELF_ROWS = 8;
 
-const WALL_THICKNESS = 26;
+const WALL_THICKNESS = 50;
 const DOOR_THICKNESS = 18;
-const WINDOW_THICKNESS = 24;
+const WINDOW_THICKNESS = 50;
 
 /** Базовый шаг сетки. Для длины/ширины стеллажа = одна клетка. */
 const GRID = 50;
@@ -761,8 +761,8 @@ function segmentThickness(type: "wall" | "door" | "window") {
 }
 
 /**
- * Стена/окно/дверь: ось лежит на линии сетки (горизонталь или вертикаль),
- * торцы — в узлах сетки. Не «по клеткам площади», а по границам клеток.
+ * Стена/окно: толщина = клетка, сегмент по узлам сетки без half-cell зазоров в углах.
+ * Дверь остаётся тонкой полосой по оси.
  */
 function snapSegmentRect(
   type: "wall" | "door" | "window",
@@ -770,26 +770,28 @@ function snapSegmentRect(
 ) {
   const thickness = segmentThickness(type);
   const horizontal = Math.abs(rect.width) >= Math.abs(rect.height);
+  const cellAligned = type === "wall" || type === "window";
+
   if (horizontal) {
-    const yCenter = snapToGridValue(rect.y + rect.height / 2);
+    const axisY = snapToGridValue(rect.y + rect.height / 2);
     let left = snapToGridValue(rect.x);
     let right = snapToGridValue(rect.x + rect.width);
     if (right === left) right = left + GRID;
     if (right < left) [left, right] = [right, left];
     return {
       x: left,
-      y: yCenter - thickness / 2,
+      y: cellAligned ? axisY : axisY - thickness / 2,
       width: right - left,
       height: thickness,
     };
   }
-  const xCenter = snapToGridValue(rect.x + rect.width / 2);
+  const axisX = snapToGridValue(rect.x + rect.width / 2);
   let top = snapToGridValue(rect.y);
   let bottom = snapToGridValue(rect.y + rect.height);
   if (bottom === top) bottom = top + GRID;
   if (bottom < top) [top, bottom] = [bottom, top];
   return {
-    x: xCenter - thickness / 2,
+    x: cellAligned ? axisX : axisX - thickness / 2,
     y: top,
     width: thickness,
     height: bottom - top,
@@ -840,16 +842,17 @@ function segmentToDraft(
     const len = Math.hypot(dx, dy);
     if (len < GRID - 0.5) return null;
     const thickness = segmentThickness(type);
+    const cellAligned = type === "wall" || type === "window";
     if (Math.abs(dx) >= Math.abs(dy)) {
       return snapSegmentRect(type, {
         x: Math.min(start.x, finalEnd.x),
-        y: start.y - thickness / 2,
+        y: cellAligned ? start.y : start.y - thickness / 2,
         width: Math.abs(dx),
         height: thickness,
       });
     }
     return snapSegmentRect(type, {
-      x: start.x - thickness / 2,
+      x: cellAligned ? start.x : start.x - thickness / 2,
       y: Math.min(start.y, finalEnd.y),
       width: thickness,
       height: Math.abs(dy),
