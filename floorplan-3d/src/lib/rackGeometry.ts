@@ -33,7 +33,6 @@ const REAL_POST_MM = 55;
 const REAL_BEAM_MM = 50;
 const REAL_DECK_MM = 12;
 const REAL_BRACE_MM = 30;
-const REAL_LEVELS_MM = [465, 922, 1362, 1802, 2242];
 
 function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));
@@ -51,7 +50,7 @@ export function buildRackFrame(
 ): RackFrame {
   const along = Math.max(alongM, 0.4);
   const deep = Math.max(deepM, 0.3);
-  const levelsN = Math.max(1, Math.min(8, Math.round(shelfCount) || 5));
+  const levelsN = Math.max(1, Math.min(40, Math.round(shelfCount) || 5));
   const height = clamp(heightM, 1.2, 6);
   const scale = height / mmToM(REAL_HEIGHT_MM);
   const post = clamp(mmToM(REAL_POST_MM) * scale, 0.03, 0.07);
@@ -62,13 +61,20 @@ export function buildRackFrame(
   const innerW = Math.max(along - post * 2, along * 0.55);
   const innerD = Math.max(deep - post * 2, deep * 0.5);
 
-  const sourceLevels = REAL_LEVELS_MM.slice(0, levelsN);
-  const levels: RackLevel[] = sourceLevels.map((levelMm, index) => {
-    const beamY = clamp((levelMm / REAL_HEIGHT_MM) * height, beamH / 2, height - beamH / 2);
+  // Равномерно по высоте, чтобы 1–8 полок визуально отличались в 3Д
+  const margin = height * 0.08;
+  const usable = Math.max(beamH * 2, height - margin * 2);
+  const sourceLevels: number[] = [];
+  for (let i = 0; i < levelsN; i++) {
+    const t = levelsN === 1 ? 0.5 : i / (levelsN - 1);
+    sourceLevels.push(margin + usable * t);
+  }
+  const levels: RackLevel[] = sourceLevels.map((beamYRaw, index) => {
+    const beamY = clamp(beamYRaw, beamH / 2, height - beamH / 2);
     const deckTop = beamY + beamH / 2 + deckT;
     const next = sourceLevels[index + 1];
-    const ceiling = next
-      ? clamp((next / REAL_HEIGHT_MM) * height, beamH / 2, height - beamH / 2) - beamH / 2
+    const ceiling = next != null
+      ? clamp(next, beamH / 2, height - beamH / 2) - beamH / 2
       : height;
     return {
       index,
@@ -105,9 +111,14 @@ export function buildRackParts(frame: RackFrame): RackPart[] {
   ];
 
   for (const level of frame.levels) {
-    // Задняя балка (закрытая сторона) и настил; перед (+hz) открыт для доступа
+    // Балки спереди и сзади; настил между ними
     parts.push({
       position: [0, level.beamY, -hz],
+      size: [innerW, beamH, beamD],
+      role: "rackBeam",
+    });
+    parts.push({
+      position: [0, level.beamY, hz],
       size: [innerW, beamH, beamD],
       role: "rackBeam",
     });

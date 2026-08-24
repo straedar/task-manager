@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { Canvas } from "@react-three/fiber";
-import { Bounds, Grid, OrbitControls } from "@react-three/drei";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Canvas, useThree } from "@react-three/fiber";
+import { Grid, OrbitControls } from "@react-three/drei";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
 import type { MapObject, MapSettings } from "../api";
 import {
@@ -8,14 +9,14 @@ import {
   buildRackParts,
 } from "../lib/rackGeometry";
 import {
-  CHAIR_HEIGHT_M,
   DOOR_HEIGHT_M,
   GRID,
   METERS_PER_GRID,
   PALLET_HEIGHT_M,
-  TABLE_HEIGHT_M,
+  rackPose,
   worldToMeters,
 } from "../world";
+import { OfficeChairMesh, OfficeDeskMesh } from "./OfficeFurniture3D";
 
 type Props = {
   objects: MapObject[];
@@ -378,10 +379,12 @@ function RackMesh({
   onSelect: () => void;
   onOpen?: () => void;
 }) {
-  const { w, d, x, z, rotY } = footprint(obj);
+  const { x, z } = footprint(obj);
+  const pose = useMemo(() => rackPose(obj), [obj.width, obj.height, obj.rotation]);
   const frame = useMemo(
-    () => buildRackFrame(w, d, obj.shelvesCount ?? 5, rackHeightM),
-    [w, d, obj.shelvesCount, rackHeightM],
+    () =>
+      buildRackFrame(pose.alongM, pose.deepM, obj.shelvesCount ?? 5, rackHeightM),
+    [pose.alongM, pose.deepM, obj.shelvesCount, rackHeightM],
   );
   const parts = useMemo(() => buildRackParts(frame), [frame]);
   const partMats = useMemo(
@@ -392,7 +395,7 @@ function RackMesh({
   return (
     <group
       position={[x, 0, z]}
-      rotation={[0, rotY, 0]}
+      rotation={[0, pose.rotY, 0]}
       onClick={(e) => {
         e.stopPropagation();
         onSelect();
@@ -567,29 +570,87 @@ function ObjectMesh({
       );
     case "table":
       return (
-        <SimpleBox
-          obj={obj}
-          height={TABLE_HEIGHT_M}
-          color="#9a7b5c"
-          selected={selected}
-          onSelect={onSelect}
-        />
+        <OfficeDeskMesh obj={obj} selected={selected} onSelect={onSelect} />
       );
     case "chair":
       return (
-        <SimpleBox
-          obj={obj}
-          height={CHAIR_HEIGHT_M}
-          color="#7d9a84"
-          selected={selected}
-          onSelect={onSelect}
-        />
+        <OfficeChairMesh obj={obj} selected={selected} onSelect={onSelect} />
       );
     case "zone":
       return <ZoneMesh obj={obj} selected={selected} onSelect={onSelect} />;
     default:
       return null;
   }
+}
+
+/**
+ * Стартовый ракурс: высокий косой вид сверху (~45–55°),
+ * вся площадка в кадре с небольшим запасом по краям.
+ */
+function DefaultWarehouseCamera({
+  cx,
+  cz,
+  spanX,
+  spanZ,
+}: {
+  cx: number;
+  cz: number;
+  spanX: number;
+  spanZ: number;
+}) {
+  const { camera } = useThree();
+  const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  const applied = useRef(false);
+  const span = Math.max(spanX, spanZ, 1);
+  const targetY = 0.15;
+
+  useLayoutEffect(() => {
+    // Один раз при входе в 3Д (компонент монтируется заново)
+    if (applied.current) return;
+    applied.current = true;
+
+    const horizontal = span * 0.92;
+    const height = span * 0.86;
+    const cam = camera as THREE.PerspectiveCamera;
+    cam.position.set(
+      cx + horizontal * 0.38,
+      height,
+      cz + horizontal * 0.78,
+    );
+    cam.fov = 38;
+    cam.near = Math.max(0.08, span * 0.002);
+    cam.far = Math.max(400, span * 60);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(cx, targetY, cz);
+    cam.updateProjectionMatrix();
+
+    const syncControls = () => {
+      const ctrl = controlsRef.current;
+      if (!ctrl) return false;
+      ctrl.target.set(cx, targetY, cz);
+      ctrl.update();
+      return true;
+    };
+    if (!syncControls()) {
+      requestAnimationFrame(() => {
+        if (!syncControls()) requestAnimationFrame(syncControls);
+      });
+    }
+  }, [camera, cx, cz, span]);
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      makeDefault
+      target={[cx, targetY, cz]}
+      maxPolarAngle={Math.PI / 2.05}
+      minPolarAngle={0.18}
+      minDistance={span * 0.12}
+      maxDistance={span * 6}
+      enableDamping
+      dampingFactor={0.08}
+    />
+  );
 }
 
 export function WarehouseViewer3D({
@@ -601,10 +662,6 @@ export function WarehouseViewer3D({
   onOpenRack,
 }: Props) {
   const bounds = useMemo(() => sceneBounds(objects), [objects]);
-  const boundsKey = useMemo(
-    () => objects.map((o) => `${o.id}:${o.x}:${o.y}:${o.width}:${o.height}`).join("|"),
-    [objects],
-  );
 
   const nonClip = objects.filter((o) => o.type !== "wall" && o.type !== "window");
   const clipOnly = objects.filter((o) => o.type === "wall" || o.type === "window");
@@ -613,6 +670,8 @@ export function WarehouseViewer3D({
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cz = (bounds.minZ + bounds.maxZ) / 2;
   const wallH = settings.wallHeightM;
+  const camH = Math.max(span * 0.86, wallH * 2.5);
+  const camDist = span * 0.92;
 
   return (
     <div className="viewer-3d">
@@ -622,11 +681,13 @@ export function WarehouseViewer3D({
         gl={{ antialias: true }}
         camera={{
           position: [
-            bounds.maxX + bounds.spanX * 0.2,
-            Math.max(wallH * 2.2, span * 0.35),
-            bounds.maxZ + bounds.spanZ * 0.25,
+            cx + camDist * 0.38,
+            camH,
+            cz + camDist * 0.78,
           ],
-          fov: 42,
+          fov: 38,
+          near: Math.max(0.08, span * 0.002),
+          far: Math.max(400, span * 60),
         }}
         onPointerMissed={() => onSelect(null)}
       >
@@ -653,30 +714,21 @@ export function WarehouseViewer3D({
         />
         <FloorPlane bounds={bounds} floorUrl={settings.floorUrl} />
 
-        <Bounds key={boundsKey} fit observe margin={1.35} maxDuration={0.6}>
-          <group>
-            <mesh
-              position={[cx, wallH / 2, cz]}
-              visible={false}
-              frustumCulled={false}
-            >
-              <boxGeometry args={[bounds.spanX * 0.2, wallH, bounds.spanZ * 0.2]} />
-            </mesh>
-            {nonClip.map((obj) => (
-              <ObjectMesh
-                key={obj.id}
-                obj={obj}
-                selected={selectedId === obj.id}
-                settings={settings}
-                clipHeightM={1e9}
-                onSelect={() => onSelect(obj.id)}
-                onOpen={
-                  obj.type === "rack" ? () => onOpenRack?.(obj.id) : undefined
-                }
-              />
-            ))}
-          </group>
-        </Bounds>
+        <group>
+          {nonClip.map((obj) => (
+            <ObjectMesh
+              key={obj.id}
+              obj={obj}
+              selected={selectedId === obj.id}
+              settings={settings}
+              clipHeightM={1e9}
+              onSelect={() => onSelect(obj.id)}
+              onOpen={
+                obj.type === "rack" ? () => onOpenRack?.(obj.id) : undefined
+              }
+            />
+          ))}
+        </group>
 
         <group>
           {clipOnly.map((obj) => (
@@ -701,7 +753,12 @@ export function WarehouseViewer3D({
           sectionSize={METERS_PER_GRID * 5}
           position={[cx, -PLATFORM_THICK_M - 0.002, cz]}
         />
-        <OrbitControls makeDefault maxPolarAngle={Math.PI / 2.05} />
+        <DefaultWarehouseCamera
+          cx={cx}
+          cz={cz}
+          spanX={bounds.spanX}
+          spanZ={bounds.spanZ}
+        />
       </Canvas>
       {objects.length === 0 && (
         <p className="viewer-empty">

@@ -15,7 +15,133 @@ export const DOOR_HEIGHT_M = 2.1;
 export const WINDOW_SILL_M = 0.9;
 export const WINDOW_HEIGHT_M = 1.5;
 
-/** Поворот на 90° вокруг центра; у стеллажа/паллета/стола ориентация = обмен width/height. */
+export function worldToMeters(px: number): number {
+  return (px / GRID) * METERS_PER_GRID;
+}
+
+export function snapToGrid(value: number): number {
+  return Math.round(value / GRID) * GRID;
+}
+
+/** Сторона карты, куда смотрит открытый фронт стеллажа. */
+export type RackFront = "n" | "e" | "s" | "w";
+
+/**
+ * Ориентация стеллажа: длинная сторона footprint = вдоль полок (along),
+ * короткая = глубина; открытый фронт — длинная грань (без крестов).
+ * rotation 180° переворачивает фронт на противоположную длинную сторону.
+ */
+export function rackPose(obj: Pick<MapObject, "width" | "height" | "rotation">): {
+  alongM: number;
+  deepM: number;
+  rotY: number;
+  front: RackFront;
+} {
+  const w = worldToMeters(obj.width);
+  const d = worldToMeters(obj.height);
+  const flip =
+    Math.round(((((obj.rotation ?? 0) % 360) + 360) % 360) / 180) % 2 === 1;
+
+  if (obj.width >= obj.height) {
+    // Вдоль X, глубина Z; фронт юг (+Z) или север (−Z)
+    return {
+      alongM: Math.max(w, 0.4),
+      deepM: Math.max(d, 0.25),
+      rotY: flip ? Math.PI : 0,
+      front: flip ? "n" : "s",
+    };
+  }
+
+  // Вдоль Y карты: yaw ±90°, локальный +Z → восток или запад
+  return {
+    alongM: Math.max(d, 0.4),
+    deepM: Math.max(w, 0.25),
+    rotY: flip ? -Math.PI / 2 : Math.PI / 2,
+    front: flip ? "w" : "e",
+  };
+}
+
+/**
+ * Ориентация стола: перегородка всегда на длинной стороне (как фронт стеллажа).
+ * Локально: along = длина перегородки (X), deep = глубина столешницы (Z).
+ */
+export function deskPose(obj: Pick<MapObject, "width" | "height">): {
+  alongM: number;
+  deepM: number;
+  rotY: number;
+  /** Перегородка на «северной» / «западной» длинной кромке в координатах карты. */
+  partitionOn: "n" | "w";
+} {
+  const w = worldToMeters(obj.width);
+  const d = worldToMeters(obj.height);
+  if (obj.width >= obj.height) {
+    return {
+      alongM: Math.max(w, 0.4),
+      deepM: Math.max(d, 0.25),
+      rotY: 0,
+      partitionOn: "n",
+    };
+  }
+  return {
+    alongM: Math.max(d, 0.4),
+    deepM: Math.max(w, 0.25),
+    rotY: Math.PI / 2,
+    partitionOn: "w",
+  };
+}
+
+/** Точки стрелки фронта внутри прямоугольника стеллажа (локальные coords). */
+export function rackFrontArrowPoints(
+  width: number,
+  height: number,
+  front: RackFront,
+): number[] {
+  const cx = width / 2;
+  const cy = height / 2;
+  const tip = 0.92;
+  const base = 0.68;
+  const half = 0.16;
+  switch (front) {
+    case "s":
+      return [
+        cx - width * half,
+        height * base,
+        cx,
+        height * tip,
+        cx + width * half,
+        height * base,
+      ];
+    case "n":
+      return [
+        cx - width * half,
+        height * (1 - base),
+        cx,
+        height * (1 - tip),
+        cx + width * half,
+        height * (1 - base),
+      ];
+    case "e":
+      return [
+        width * base,
+        cy - height * half,
+        width * tip,
+        cy,
+        width * base,
+        cy + height * half,
+      ];
+    case "w":
+      return [
+        width * (1 - base),
+        cy - height * half,
+        width * (1 - tip),
+        cy,
+        width * (1 - base),
+        cy + height * half,
+      ];
+  }
+}
+
+/** Поворот на 90° вокруг центра; у стеллажа/паллета/стола — обмен width/height. */
 export function rotateMapObject90(obj: MapObject): Partial<MapObject> {
   const cx = obj.x + obj.width / 2;
   const cy = obj.y + obj.height / 2;
@@ -23,16 +149,21 @@ export function rotateMapObject90(obj: MapObject): Partial<MapObject> {
   if (obj.type === "rack" || obj.type === "pallet" || obj.type === "table") {
     let width = obj.height;
     let height = obj.width;
-    // Квадрат: после обмена ничего не видно — делаем вытянутый вдоль «новой» оси
-    if (Math.abs(width - height) < 1) {
+    // Квадратный стеллаж/паллет — слегка удлиняем, чтобы ориентация была видна.
+    if (
+      obj.type !== "table" &&
+      Math.abs(width - height) < 1
+    ) {
       width = Math.max(GRID * 2, height + GRID);
     }
+    const flip =
+      Math.round(((((obj.rotation ?? 0) % 360) + 360) % 360) / 180) % 2 === 1;
     return {
       x: snapToGrid(cx - width / 2),
       y: snapToGrid(cy - height / 2),
       width: snapToGrid(width) || width,
       height: snapToGrid(height) || height,
-      rotation: 0,
+      rotation: obj.type === "table" ? 0 : flip ? 180 : 0,
     };
   }
 
@@ -41,12 +172,11 @@ export function rotateMapObject90(obj: MapObject): Partial<MapObject> {
   };
 }
 
-export function worldToMeters(px: number): number {
-  return (px / GRID) * METERS_PER_GRID;
-}
-
-export function snapToGrid(value: number): number {
-  return Math.round(value / GRID) * GRID;
+/** Перевернуть открытый фронт на противоположную длинную сторону. */
+export function flipRackFront(obj: MapObject): Partial<MapObject> {
+  const flip =
+    Math.round(((((obj.rotation ?? 0) % 360) + 360) % 360) / 180) % 2 === 1;
+  return { rotation: flip ? 0 : 180 };
 }
 
 /**
@@ -87,6 +217,25 @@ export function wallRectFromPoints(
     width: GRID,
     height: Math.max(GRID, bottom - top),
   };
+}
+
+/** Ортогональный сегмент стены/окна + конечная точка для продолжения цепочки. */
+export function wallSegmentFromPoints(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): {
+  rect: { x: number; y: number; width: number; height: number };
+  end: { x: number; y: number };
+} | null {
+  const start = { x: snapToGrid(a.x), y: snapToGrid(a.y) };
+  const aimed = { x: snapToGrid(b.x), y: snapToGrid(b.y) };
+  const end =
+    Math.abs(aimed.x - start.x) >= Math.abs(aimed.y - start.y)
+      ? { x: aimed.x, y: start.y }
+      : { x: start.x, y: aimed.y };
+  const len = Math.hypot(end.x - start.x, end.y - start.y);
+  if (len < GRID - 0.5) return null;
+  return { rect: wallRectFromPoints(start, end), end };
 }
 
 /** Привести старые «тонкие» стены/окна к толщине GRID на сетке. */
@@ -134,7 +283,7 @@ export function segmentNeedsNormalize(obj: MapObject): boolean {
 }
 
 export function clampScale(scale: number): number {
-  return Math.min(4, Math.max(0.08, scale));
+  return Math.min(4, Math.max(0.02, scale));
 }
 
 export function snapsToMapGrid(type: ObjectType): boolean {
@@ -156,7 +305,9 @@ export function minSize(type: ObjectType): { minSide: number; minLong: number } 
     case "door":
       return { minSide: Math.round(GRID * 0.28), minLong: GRID };
     case "chair":
-      return { minSide: GRID * 0.6, minLong: GRID * 0.6 };
+      return { minSide: GRID * 6, minLong: GRID * 6 };
+    case "table":
+      return { minSide: GRID, minLong: GRID * 2 };
     default:
       return { minSide: GRID, minLong: GRID };
   }
@@ -180,7 +331,7 @@ export function fitStageToObjects(
   objects: MapObject[],
   viewW: number,
   viewH: number,
-  paddingRatio = 0.1,
+  paddingRatio = 0.06,
 ): { scale: number; x: number; y: number } | null {
   if (objects.length === 0 || viewW < 40 || viewH < 40) return null;
 
@@ -300,8 +451,8 @@ export function defaultObjectAt(
         label: "Стол",
         x,
         y,
-        width: GRID * 2,
-        height: GRID,
+        width: GRID * 13,
+        height: GRID * 7,
         shelvesCount: null,
         rotation: 0,
         frameWidth: null,
@@ -310,11 +461,11 @@ export function defaultObjectAt(
     case "chair":
       return {
         type,
-        label: "Стул",
+        label: "Кресло",
         x,
         y,
-        width: GRID,
-        height: GRID,
+        width: GRID * 6,
+        height: GRID * 6,
         shelvesCount: null,
         rotation: 0,
         frameWidth: null,
@@ -330,8 +481,8 @@ export const OBJECT_FILL: Record<ObjectType, string> = {
   wall: "#1a1d22",
   window: "#7eb6d4",
   door: "#a67c52",
-  table: "#6b5344",
-  chair: "#5a6a4a",
+  table: "#cbb892",
+  chair: "#2a2e34",
 };
 
 export const LABELED_TYPES: ReadonlySet<ObjectType> = new Set([
@@ -348,5 +499,5 @@ export const TOOL_LABELS: { type: ObjectType; label: string }[] = [
   { type: "pallet", label: "Паллет" },
   { type: "zone", label: "Жёлтая зона" },
   { type: "table", label: "Стол" },
-  { type: "chair", label: "Стул" },
+  { type: "chair", label: "Кресло" },
 ];

@@ -272,8 +272,9 @@ function minSizeFor(type: ObjectType) {
     case "door":
       return { minSide: 6, minLong: 24 };
     case "chair":
-      return { minSide: 18, minLong: 18 };
+      return { minSide: 50 * 6, minLong: 50 * 6 };
     case "table":
+      return { minSide: 50, minLong: 50 * 2 };
     case "zone":
     case "pallet":
     case "rack":
@@ -2024,7 +2025,7 @@ function defaultLabel(type: ObjectType) {
     case "table":
       return "Стол";
     case "chair":
-      return "Стул";
+      return "Кресло";
   }
 }
 

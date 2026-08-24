@@ -1,4 +1,16 @@
-:root { --ink: #14202a; --muted: #5c6b78; --line: rgba(20, 32, 42, 0.12); --panel: rgba(248, 251, 253, 0.98); --accent: #e07a2f; --accent-deep: #2f5fbf; --danger: #b33a2f; }
+/* Тёмный текст только внутри интерьера/диалогов — не трогаем :root тёмной темы приложения */
+.interior,
+.item-detail-backdrop,
+.tm-dialog-backdrop {
+  --ink: #14202a;
+  --muted: #5c6b78;
+  --line: rgba(20, 32, 42, 0.12);
+  --panel: rgba(248, 251, 253, 0.98);
+  --accent: #e07a2f;
+  --accent-deep: #2f5fbf;
+  --danger: #b33a2f;
+  color: #14202a;
+}
 
 .catalog-picker {
   margin-bottom: 0.85rem;
@@ -153,15 +165,18 @@
 
 .catalog-search {
   width: 100%;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(20, 32, 42, 0.18);
   border-radius: 10px;
   padding: 0.5rem 0.65rem;
   font: inherit;
   font-size: 0.88rem;
   margin-bottom: 0.4rem;
   background: #fff;
-  color: var(--ink);
+  color: #14202a;
+  -webkit-text-fill-color: #14202a;
+  caret-color: #14202a;
   outline: none;
+  color-scheme: light;
 }
 
 .catalog-search:focus {
@@ -1194,7 +1209,9 @@ body.moving-entity * {
   padding: 1.1rem 1.15rem 1.2rem;
   border-radius: 16px;
   background: rgba(248, 251, 253, 0.98);
-  border: 1px solid var(--line);
+  border: 1px solid rgba(20, 32, 42, 0.12);
+  color: #14202a;
+  color-scheme: light;
   box-shadow: 0 18px 40px rgba(20, 32, 42, 0.22);
   animation: rise 160ms ease-out both;
   outline: none;
@@ -1243,7 +1260,7 @@ body.moving-entity * {
   font-size: 1.2rem;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: var(--ink);
+  color: #14202a;
   line-height: 1.25;
   word-break: break-word;
   white-space: pre-line;
@@ -1282,9 +1299,12 @@ body.moving-entity * {
 .item-detail-field input,
 .item-detail-field textarea {
   width: 100%;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(20, 32, 42, 0.18);
   background: #fff;
-  color: var(--ink);
+  color: #14202a;
+  -webkit-text-fill-color: #14202a;
+  caret-color: #14202a;
+  color-scheme: light;
   border-radius: 8px;
   padding: 0.65rem 0.7rem;
   font: inherit;
@@ -2247,15 +2267,17 @@ body.moving-entity * {
 .tm-dialog__field input {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--tm-border, rgba(30, 44, 54, 0.18));
+  border: 1px solid rgba(30, 44, 54, 0.18);
   border-radius: 12px;
   padding: 12px 14px;
   font: inherit;
   font-size: 1rem;
-  color: var(--tm-text, var(--ink));
-  background: var(--tm-surface-muted, #f7f9fb);
+  color: #14202a;
+  -webkit-text-fill-color: #14202a;
+  background: #fff;
   outline: none;
-  caret-color: var(--tm-text, var(--ink));
+  caret-color: #14202a;
+  color-scheme: light;
 }
 
 .tm-dialog__field input::placeholder {
