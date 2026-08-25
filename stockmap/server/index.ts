@@ -59,7 +59,7 @@ function withTransaction<T>(fn: () => T): T {
 db.exec(`
   CREATE TABLE IF NOT EXISTS map_objects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    type TEXT NOT NULL CHECK (type IN ('rack', 'wall', 'door', 'table', 'chair')),
+    type TEXT NOT NULL CHECK (type IN ('rack', 'wall', 'door', 'table', 'computer_desk', 'chair')),
     label TEXT NOT NULL DEFAULT '',
     x REAL NOT NULL,
     y REAL NOT NULL,
@@ -120,13 +120,14 @@ db.prepare(
     (!!createSql &&
       (!createSql.includes("'pallet'") ||
         !createSql.includes("'zone'") ||
-        !createSql.includes("'window'")));
+        !createSql.includes("'window'") ||
+        !createSql.includes("'computer_desk'")));
 
   if (needsTypeExpand) {
     db.exec(`
       CREATE TABLE map_objects_new (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL CHECK (type IN ('rack', 'pallet', 'zone', 'wall', 'window', 'door', 'table', 'chair')),
+        type TEXT NOT NULL CHECK (type IN ('rack', 'pallet', 'zone', 'wall', 'window', 'door', 'table', 'computer_desk', 'chair')),
         label TEXT NOT NULL DEFAULT '',
         x REAL NOT NULL,
         y REAL NOT NULL,
@@ -198,6 +199,7 @@ type ObjectType =
   | "window"
   | "door"
   | "table"
+  | "computer_desk"
   | "chair";
 type RackTheme = "blue" | "black";
 
@@ -235,10 +237,23 @@ function normalizeRackTheme(value: unknown, fallback: RackTheme = "blue"): RackT
 }
 
 function mapObject(row: ObjectRow) {
+  let label = row.label;
+  // Переименование: старые `table` раньше были «Стол» (с перегородкой),
+  // теперь это «Компьютерный стол».
+  if (row.type === "table" && (label === "" || label === "Стол")) {
+    label = "Компьютерный стол";
+  }
+  // `computer_desk` — новый тип «стол без перегородки».
+  if (
+    row.type === "computer_desk" &&
+    (label === "" || label === "Компьютерный стол")
+  ) {
+    label = "Стол";
+  }
   return {
     id: row.id,
     type: row.type,
-    label: row.label,
+    label,
     x: row.x,
     y: row.y,
     width: row.width,
@@ -262,6 +277,7 @@ const TYPES = new Set<ObjectType>([
   "window",
   "door",
   "table",
+  "computer_desk",
   "chair",
 ]);
 
@@ -274,6 +290,8 @@ function minSizeFor(type: ObjectType) {
     case "chair":
       return { minSide: 50 * 6, minLong: 50 * 6 };
     case "table":
+      return { minSide: 50, minLong: 50 * 2 };
+    case "computer_desk":
       return { minSide: 50, minLong: 50 * 2 };
     case "zone":
     case "pallet":
@@ -367,8 +385,8 @@ app.get("/api/map-settings", async () => {
   const floorMime = getMapSetting("floor_mime", "");
   const rev = getMapSetting("floor_rev", "0");
   return {
-    wallHeightM: Number(getMapSetting("wall_height_m", "3.6")) || 3.6,
-    rackHeightM: Number(getMapSetting("rack_height_m", "2.7")) || 2.7,
+    wallHeightM: Number(getMapSetting("wall_height_m", "10")) || 10,
+    rackHeightM: Number(getMapSetting("rack_height_m", "6")) || 6,
     windowSillM: Number(getMapSetting("window_sill_m", "0.9")) || 0.9,
     windowHeightM: Number(getMapSetting("window_height_m", "1.5")) || 1.5,
     hasFloorTexture: Boolean(floorMime),
@@ -391,16 +409,17 @@ app.put<{
     const v = typeof n === "number" && Number.isFinite(n) ? n : fallback;
     return Math.min(max, Math.max(min, v));
   };
-  if (body.wallHeightM != null) {
+  const canTuneHeights = Boolean(request.user?.isRoot);
+  if (canTuneHeights && body.wallHeightM != null) {
     setMapSetting(
       "wall_height_m",
-      String(clampH(body.wallHeightM, 1.5, 8, 3.6)),
+      String(clampH(body.wallHeightM, 1.5, 10, 10)),
     );
   }
-  if (body.rackHeightM != null) {
+  if (canTuneHeights && body.rackHeightM != null) {
     setMapSetting(
       "rack_height_m",
-      String(clampH(body.rackHeightM, 1.2, 6, 2.7)),
+      String(clampH(body.rackHeightM, 1.2, 8, 6)),
     );
   }
   if (body.windowSillM != null) {
@@ -418,8 +437,8 @@ app.put<{
   const floorMime = getMapSetting("floor_mime", "");
   const rev = getMapSetting("floor_rev", "0");
   return {
-    wallHeightM: Number(getMapSetting("wall_height_m", "3.6")) || 3.6,
-    rackHeightM: Number(getMapSetting("rack_height_m", "2.7")) || 2.7,
+    wallHeightM: Number(getMapSetting("wall_height_m", "10")) || 10,
+    rackHeightM: Number(getMapSetting("rack_height_m", "6")) || 6,
     windowSillM: Number(getMapSetting("window_sill_m", "0.9")) || 0.9,
     windowHeightM: Number(getMapSetting("window_height_m", "1.5")) || 1.5,
     hasFloorTexture: Boolean(floorMime),
@@ -600,7 +619,13 @@ app.patch<{
   }
 
   const body = request.body ?? {};
-  const canRotate = existing.type === "door" || existing.type === "chair";
+  const canRotate =
+    existing.type === "door" ||
+    existing.type === "chair" ||
+    existing.type === "rack" ||
+    existing.type === "table" ||
+    existing.type === "computer_desk" ||
+    existing.type === "pallet";
   const next = {
     label:
       typeof body.label === "string" && body.label.trim()
@@ -1082,6 +1107,18 @@ const ITEM_TYPES = new Set<ShelfItemType>([
   "cell",
   "stack",
 ]);
+
+const listAllItemsStmt = db.prepare(`
+  SELECT id, rack_id, shelf_index, type, width_ratio, pos_x, depth_row, stack_order,
+         title, details, quantity, info_updated_at
+  FROM shelf_items
+  ORDER BY rack_id ASC, shelf_index ASC, depth_row ASC, pos_x ASC, stack_order ASC, id ASC
+`);
+
+app.get("/api/shelf-items", async () => {
+  const rows = listAllItemsStmt.all() as ShelfItemRow[];
+  return rows.map((row) => mapShelfItem(row, []));
+});
 
 app.get<{ Params: { id: string } }>(
   "/api/racks/:id/items",
@@ -2023,6 +2060,8 @@ function defaultLabel(type: ObjectType) {
     case "door":
       return "Дверь";
     case "table":
+      return "Компьютерный стол";
+    case "computer_desk":
       return "Стол";
     case "chair":
       return "Кресло";

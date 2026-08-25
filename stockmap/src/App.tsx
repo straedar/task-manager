@@ -3770,7 +3770,7 @@ function RackInterior({
                 ["box", "Коробка"],
                 ["container", "Контейнер"],
                 ["cell", "Ячейка"],
-                ["stack", "Мини-ячейка"],
+                ["stack", "Коробка с запасом"],
               ] as const
             ).map(([type, title]) => (
               <button
@@ -4984,7 +4984,7 @@ function ItemDetailPanel({
                       ["box", "Коробка"],
                       ["container", "Контейнер"],
                       ["cell", "Ячейка"],
-                      ["stack", "Мини-ячейка"],
+                      ["stack", "Коробка с запасом"],
                     ] as const
                   ).map(([type, label]) => (
                     <button
@@ -5041,7 +5041,7 @@ function entityTitle(type: ShelfItemType) {
     case "cell":
       return "Ячейка";
     case "stack":
-      return "Мини-ячейка";
+      return "Коробка с запасом";
   }
 }
 

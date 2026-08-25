@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { createShelfItem, deleteShelfItem, listShelfItems, replaceRackItems, setShelfItemContents, updateShelfItem, type MapObject, type RackTheme, type ShelfItem, type ShelfItemType } from "../api";
 import { CatalogContentsPicker, type CatalogPick } from "../CatalogContentsPicker";
 import { useDialog } from "../DialogContext";
@@ -15,6 +15,76 @@ const DEFAULT_FRAME_WIDTH = 720;
 const FRAME_WIDTH_MIN = 360;
 const FRAME_WIDTH_MAX = 1600;
 const UNSTACK_ARM_MS = 300;
+
+function ShelfRowControls({
+  shelfIndex,
+  activeRow,
+  maxRows,
+  isTop = false,
+  onSetRow,
+  onAddRow,
+  onRemoveRow,
+}: {
+  shelfIndex: number;
+  activeRow: number;
+  maxRows: number;
+  isTop?: boolean;
+  onSetRow: (shelfIndex: number, row: number) => void;
+  onAddRow: (shelfIndex: number) => void;
+  onRemoveRow: (shelfIndex: number) => void;
+}) {
+  return (
+    <div
+      className={`shelf-row-switch${isTop ? " shelf-row-top" : ""}`}
+      aria-label={`Ряд полки ${shelfIndex}`}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="shelf-row-grid">
+        {Array.from({ length: maxRows }, (_, i) => i + 1).map((row) => (
+          <button
+            key={row}
+            type="button"
+            className={`shelf-row-btn${activeRow === row ? " active" : ""}${
+              maxRows === 1 ? " alone" : ""
+            }`}
+            onClick={() => onSetRow(shelfIndex, row)}
+          >
+            Ряд {row}
+          </button>
+        ))}
+      </div>
+      <div className="shelf-row-actions">
+        <button
+          type="button"
+          className="shelf-row-add"
+          disabled={maxRows >= MAX_SHELF_ROWS}
+          title={
+            maxRows >= MAX_SHELF_ROWS
+              ? "Достигнут максимум рядов"
+              : "Добавить ряд"
+          }
+          onClick={() => onAddRow(shelfIndex)}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          className="shelf-row-remove"
+          disabled={maxRows <= 1}
+          title={
+            maxRows <= 1
+              ? "Нельзя удалить единственный ряд"
+              : `Удалить ряд ${maxRows}`
+          }
+          onClick={() => onRemoveRow(shelfIndex)}
+        >
+          −
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function normalizeRackTheme(value: unknown): RackTheme {
   if (value === "black" || value === "orange") return "black";
@@ -1404,12 +1474,6 @@ export function RackInterior({
     fitRackToViewport();
   };
 
-  const selectedItemHint = useMemo(() => {
-    if (selectedItemId == null) return null;
-    const item = items.find((entry) => entry.id === selectedItemId);
-    return item ? itemDisplayName(item) : null;
-  }, [items, selectedItemId]);
-
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -2002,6 +2066,14 @@ export function RackInterior({
                       />
                     </div>
                     <div className="shelf-plank" aria-hidden />
+                    <ShelfRowControls
+                      shelfIndex={n}
+                      activeRow={depthRow}
+                      maxRows={rowsOnShelf}
+                      onSetRow={setShelfRow}
+                      onAddRow={addShelfRow}
+                      onRemoveRow={removeShelfRow}
+                    />
                   </div>
                 );
               })}
@@ -2142,82 +2214,21 @@ export function RackInterior({
                       />
                     </div>
                     <div className="shelf-plank" aria-hidden />
+                    <ShelfRowControls
+                      shelfIndex={n}
+                      activeRow={depthRow}
+                      maxRows={rowsOnShelf}
+                      isTop
+                      onSetRow={setShelfRow}
+                      onAddRow={addShelfRow}
+                      onRemoveRow={removeShelfRow}
+                    />
                   </div>
                 );
               })()}
             </div>
-
-            <div
-              className="rack-row-rail"
-              aria-label="Ряды полок"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {[...levels, topDeckIndex].map((n) => {
-                const active = rowOf(n);
-                const maxRows = rowCountOf(n);
-                return (
-                  <div
-                    key={n}
-                    className={`shelf-row-switch${n === topDeckIndex ? " shelf-row-top" : ""}`}
-                    aria-label={`Ряд полки ${n}`}
-                  >
-                    <div className="shelf-row-grid">
-                      {Array.from({ length: maxRows }, (_, i) => i + 1).map(
-                        (row) => (
-                          <button
-                            key={row}
-                            type="button"
-                            className={`shelf-row-btn${active === row ? " active" : ""}${
-                              maxRows === 1 ? " alone" : ""
-                            }`}
-                            onClick={() => setShelfRow(n, row)}
-                          >
-                            Ряд {row}
-                          </button>
-                        ),
-                      )}
-                    </div>
-                    <div className="shelf-row-actions">
-                      <button
-                        type="button"
-                        className="shelf-row-add"
-                        disabled={maxRows >= MAX_SHELF_ROWS}
-                        title={
-                          maxRows >= MAX_SHELF_ROWS
-                            ? "Достигнут максимум рядов"
-                            : "Добавить ряд"
-                        }
-                        onClick={() => addShelfRow(n)}
-                      >
-                        +
-                      </button>
-                      <button
-                        type="button"
-                        className="shelf-row-remove"
-                        disabled={maxRows <= 1}
-                        title={
-                          maxRows <= 1
-                            ? "Нельзя удалить единственный ряд"
-                            : `Удалить ряд ${maxRows}`
-                        }
-                        onClick={() => removeShelfRow(n)}
-                      >
-                        −
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
           </div>
         </div>
-
-        {selectedItemHint && (
-          <div className="rack-selection-hint" title={selectedItemHint}>
-            {selectedItemHint}
-          </div>
-        )}
 
         <div className="zoom-controls rack-zoom-controls" aria-label="Масштаб стеллажа">
           <div className="rack-zoom-btns">
@@ -2318,7 +2329,7 @@ export function RackInterior({
                 ["box", "Коробка"],
                 ["container", "Контейнер"],
                 ["cell", "Ячейка"],
-                ["stack", "Мини-ячейка"],
+                ["stack", "Коробка с запасом"],
               ] as const
             ).map(([type, title]) => (
               <button
@@ -3079,7 +3090,6 @@ function ShelfEntityCard({
         className={`shelf-entity shelf-entity-${item.type}${
           selected ? " selected" : ""
         }${highlighted ? " search-highlight" : ""}`}
-        title={itemDisplayName(item)}
         style={
           stacked
             ? undefined
@@ -3115,6 +3125,11 @@ function ShelfEntityCard({
           <ShelfEntityLabel text={itemFaceLabel(item)} viewScale={viewScale} />
         )}
       </button>
+      {selected && !inactive && (
+        <div className="entity-name-bubble" role="status">
+          {itemDisplayName(item)}
+        </div>
+      )}
       {selected && !inactive && (
         <>
           <span
@@ -3532,7 +3547,7 @@ function ItemDetailPanel({
                       ["box", "Коробка"],
                       ["container", "Контейнер"],
                       ["cell", "Ячейка"],
-                      ["stack", "Мини-ячейка"],
+                      ["stack", "Коробка с запасом"],
                     ] as const
                   ).map(([type, label]) => (
                     <button
@@ -3589,7 +3604,7 @@ function entityTitle(type: ShelfItemType) {
     case "cell":
       return "Ячейка";
     case "stack":
-      return "Мини-ячейка";
+      return "Коробка с запасом";
   }
 }
 

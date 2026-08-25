@@ -10,8 +10,10 @@ import {
   clampScale,
   defaultObjectAt,
   fitStageToObjects,
+  deskPose,
   flipRackFront,
   minSize,
+  rackPose,
   rotateMapObject90,
   snapToGrid,
   snapsToMapGrid,
@@ -121,10 +123,8 @@ function ObjectVisual({
     );
   }
 
-  if (obj.type === "table") {
+  if (obj.type === "computer_desk") {
     const pad = Math.max(3, Math.min(obj.width, obj.height) * 0.05);
-    const divider = Math.max(5, pad * 1.4);
-    const longAlongX = obj.width >= obj.height;
     return (
       <>
         <Rect
@@ -135,51 +135,98 @@ function ObjectVisual({
           strokeWidth={selected ? 2 : 1.5}
           cornerRadius={3}
         />
-        {longAlongX ? (
-          <>
-            {/* Перегородка на длинной (верхней) стороне */}
-            <Rect
-              x={pad * 0.4}
-              y={0}
-              width={obj.width - pad * 0.8}
-              height={divider}
-              fill={selected ? "#a8895c" : "#8f7350"}
-              cornerRadius={1}
-              listening={false}
-            />
-            <Rect
-              x={pad}
-              y={divider + pad * 0.4}
-              width={obj.width - pad * 2}
-              height={obj.height - divider - pad * 1.2}
-              fill="rgba(255,255,255,0.14)"
-              cornerRadius={2}
-              listening={false}
-            />
-          </>
-        ) : (
-          <>
-            {/* Перегородка на длинной (левой) стороне */}
-            <Rect
-              x={0}
-              y={pad * 0.4}
-              width={divider}
-              height={obj.height - pad * 0.8}
-              fill={selected ? "#a8895c" : "#8f7350"}
-              cornerRadius={1}
-              listening={false}
-            />
-            <Rect
-              x={divider + pad * 0.4}
-              y={pad}
-              width={obj.width - divider - pad * 1.2}
-              height={obj.height - pad * 2}
-              fill="rgba(255,255,255,0.14)"
-              cornerRadius={2}
-              listening={false}
-            />
-          </>
-        )}
+        <Rect
+          x={pad}
+          y={pad}
+          width={obj.width - pad * 2}
+          height={obj.height - pad * 2}
+          fill="rgba(255,255,255,0.14)"
+          cornerRadius={2}
+          listening={false}
+        />
+        {obj.label ? (
+          <Text
+            text={obj.label}
+            width={obj.width}
+            height={obj.height}
+            align="center"
+            verticalAlign="middle"
+            fontSize={Math.max(
+              11,
+              Math.min(16, Math.min(obj.width, obj.height) / 5),
+            )}
+            fill="#3d2a12"
+            fontStyle="bold"
+            listening={false}
+          />
+        ) : null}
+      </>
+    );
+  }
+
+  if (obj.type === "table") {
+    const pad = Math.max(3, Math.min(obj.width, obj.height) * 0.05);
+    const divider = Math.max(6, pad * 1.6);
+    const side = deskPose(obj).partitionOn;
+    const partitionFill = selected ? "#6b4e2e" : "#5a3f24";
+    const partition =
+      side === "n" ? (
+        <Rect
+          x={0}
+          y={0}
+          width={obj.width}
+          height={divider}
+          fill={partitionFill}
+          listening={false}
+        />
+      ) : side === "s" ? (
+        <Rect
+          x={0}
+          y={obj.height - divider}
+          width={obj.width}
+          height={divider}
+          fill={partitionFill}
+          listening={false}
+        />
+      ) : side === "w" ? (
+        <Rect
+          x={0}
+          y={0}
+          width={divider}
+          height={obj.height}
+          fill={partitionFill}
+          listening={false}
+        />
+      ) : (
+        <Rect
+          x={obj.width - divider}
+          y={0}
+          width={divider}
+          height={obj.height}
+          fill={partitionFill}
+          listening={false}
+        />
+      );
+    return (
+      <>
+        <Rect
+          width={obj.width}
+          height={obj.height}
+          fill={selected ? "#dcc7a0" : "#d2b88a"}
+          stroke={selected ? "#f08a2e" : "#9a8050"}
+          strokeWidth={selected ? 2 : 1.5}
+          cornerRadius={3}
+        />
+        <Rect
+          x={pad}
+          y={pad}
+          width={obj.width - pad * 2}
+          height={obj.height - pad * 2}
+          fill="rgba(255,255,255,0.14)"
+          cornerRadius={2}
+          listening={false}
+        />
+        {partition}
         {obj.label ? (
           <Text
             text={obj.label}
@@ -252,6 +299,84 @@ function ObjectVisual({
     );
   }
 
+  if (obj.type === "rack") {
+    const pose = rackPose(obj);
+    const backSide =
+      pose.front === "s"
+        ? "n"
+        : pose.front === "n"
+          ? "s"
+          : pose.front === "e"
+            ? "w"
+            : "e";
+    const divider = Math.max(5, Math.min(obj.width, obj.height) * 0.12);
+    const backFill = selected ? "#1a3a6e" : obj.rackTheme === "black" ? "#1a1d22" : "#1e3a6e";
+    const backWall =
+      backSide === "n" ? (
+        <Rect
+          x={0}
+          y={0}
+          width={obj.width}
+          height={divider}
+          fill={backFill}
+          listening={false}
+        />
+      ) : backSide === "s" ? (
+        <Rect
+          x={0}
+          y={obj.height - divider}
+          width={obj.width}
+          height={divider}
+          fill={backFill}
+          listening={false}
+        />
+      ) : backSide === "w" ? (
+        <Rect
+          x={0}
+          y={0}
+          width={divider}
+          height={obj.height}
+          fill={backFill}
+          listening={false}
+        />
+      ) : (
+        <Rect
+          x={obj.width - divider}
+          y={0}
+          width={divider}
+          height={obj.height}
+          fill={backFill}
+          listening={false}
+        />
+      );
+    return (
+      <>
+        <Rect
+          width={obj.width}
+          height={obj.height}
+          fill={fill}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          cornerRadius={4}
+        />
+        {backWall}
+        {obj.label ? (
+          <Text
+            text={obj.label}
+            width={obj.width}
+            height={obj.height}
+            align="center"
+            verticalAlign="middle"
+            fontSize={Math.max(10, Math.min(14, obj.width / 6))}
+            fill="#f5f5f5"
+            fontStyle="bold"
+            listening={false}
+          />
+        ) : null}
+      </>
+    );
+  }
+
   const showLabel = LABELED_TYPES.has(obj.type) && Boolean(obj.label);
 
   return (
@@ -262,7 +387,7 @@ function ObjectVisual({
         fill={fill}
         stroke={stroke}
         strokeWidth={strokeWidth}
-        cornerRadius={obj.type === "rack" || obj.type === "pallet" ? 4 : 0}
+        cornerRadius={obj.type === "pallet" ? 4 : 0}
       />
       {showLabel ? (
         <Text
@@ -441,7 +566,7 @@ function MapObjectShape({
             nextH = Math.max(limits.minSide, snapToGrid(nextH));
           }
           // Для стола — длинная сторона не короче minLong (как на сервере).
-          if (obj.type === "table") {
+          if (obj.type === "table" || obj.type === "computer_desk") {
             const short = Math.min(nextW, nextH);
             const long = Math.max(nextW, nextH);
             if (long < limits.minLong) {
@@ -1210,6 +1335,7 @@ export function MapEditor2D({
                 soloObj.type === "rack" ||
                 soloObj.type === "pallet" ||
                 soloObj.type === "table" ||
+                soloObj.type === "computer_desk" ||
                 soloObj.type === "chair" ||
                 soloObj.type === "door"
               )
@@ -1247,13 +1373,28 @@ export function MapEditor2D({
           <button
             type="button"
             className="btn"
-            disabled={!soloObj || soloObj.type !== "rack"}
+            disabled={
+              !soloObj ||
+              (soloObj.type !== "rack" &&
+                soloObj.type !== "table")
+            }
+            title={
+              soloObj?.type === "table"
+                ? "Перенести перегородку на противоположную длинную сторону"
+                : "Перевернуть фронт стеллажа (полоска — задняя сторона)"
+            }
             onClick={() => {
-              if (!soloObj || soloObj.type !== "rack") return;
+              if (
+                !soloObj ||
+                (soloObj.type !== "rack" &&
+                  soloObj.type !== "table")
+              ) {
+                return;
+              }
               onPatch(soloObj.id, flipRackFront(soloObj));
             }}
           >
-            Фронт
+            {soloObj?.type === "table" ? "Перегородка" : "Фронт"}
           </button>
           <span className="toolbar-sep" aria-hidden />
           <input

@@ -15,6 +15,8 @@ export type AuthUser = {
   canEditMap: boolean;
   canEditShelves: boolean;
   requireShelfConfirm: boolean;
+  /** Корневой админ TaskMaster (parent_id = null). */
+  isRoot: boolean;
 };
 
 type SharedUserRow = {
@@ -166,6 +168,7 @@ function toAuthUser(user: SharedUserRow): AuthUser | null {
     canEditMap,
     canEditShelves,
     requireShelfConfirm,
+    isRoot: isRootUser,
   };
 }
 

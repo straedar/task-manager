@@ -3,7 +3,7 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { Grid, OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
-import type { MapObject, MapSettings } from "../api";
+import type { MapObject, MapSettings, ShelfItem } from "../api";
 import {
   buildRackFrame,
   buildRackParts,
@@ -16,13 +16,20 @@ import {
   rackPose,
   worldToMeters,
 } from "../world";
-import { OfficeChairMesh, OfficeDeskMesh } from "./OfficeFurniture3D";
+import { detectEnclosedRoomFloors } from "../lib/enclosedRooms";
+import {
+  OfficeChairMesh,
+  OfficeDeskMesh,
+  OfficePlainDeskMesh,
+} from "./OfficeFurniture3D";
+import { RackShelfItems } from "./ShelfItem3D";
 
 type Props = {
   objects: MapObject[];
   settings: MapSettings;
   selectedId: number | null;
   clipHeightM: number;
+  shelfItems?: ShelfItem[];
   onSelect: (id: number | null) => void;
   onOpenRack?: (id: number) => void;
 };
@@ -74,6 +81,8 @@ const GLASS_COLOR = "#9ec9dc";
 const SELECT_EMISSIVE = "#c4a574";
 const PLATFORM_THICK_M = 0.06;
 const PLATFORM_MARGIN_M = 0.35;
+const WALL_HEIGHT_BOOST = 4 / 3;
+const RACK_HEIGHT_BOOST = 4 / 3;
 
 /** Wall/window thickness forced to one grid cell in 3D. */
 function wallSlabSize(
@@ -102,9 +111,11 @@ function clipVertical(
 function FloorPlane({
   bounds,
   floorUrl,
+  roomFloors,
 }: {
   bounds: ReturnType<typeof sceneBounds>;
   floorUrl: string | null;
+  roomFloors: ReturnType<typeof detectEnclosedRoomFloors>;
 }) {
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cz = (bounds.minZ + bounds.maxZ) / 2;
@@ -137,9 +148,7 @@ function FloorPlane({
         loaded.colorSpace = THREE.SRGBColorSpace;
         loaded.wrapS = THREE.RepeatWrapping;
         loaded.wrapT = THREE.RepeatWrapping;
-        const tilesX = Math.max(1, bounds.spanX / (METERS_PER_GRID * 4));
-        const tilesZ = Math.max(1, bounds.spanZ / (METERS_PER_GRID * 4));
-        loaded.repeat.set(tilesX, tilesZ);
+        loaded.anisotropy = 4;
         loaded.needsUpdate = true;
         setTexture(loaded);
       } catch {
@@ -152,7 +161,7 @@ function FloorPlane({
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       loaded?.dispose();
     };
-  }, [floorUrl, bounds.spanX, bounds.spanZ]);
+  }, [floorUrl]);
 
   return (
     <group>
@@ -170,22 +179,65 @@ function FloorPlane({
         receiveShadow
       >
         <planeGeometry args={[bounds.spanX, bounds.spanZ]} />
-        {texture ? (
-          <meshStandardMaterial
-            map={texture}
-            color="#ffffff"
-            roughness={0.9}
-            metalness={0.02}
-          />
-        ) : (
-          <meshStandardMaterial
-            color={FLOOR_COLOR}
-            roughness={0.92}
-            metalness={0.02}
-          />
-        )}
+        <meshStandardMaterial
+          color={FLOOR_COLOR}
+          roughness={0.92}
+          metalness={0.02}
+        />
       </mesh>
+      {texture &&
+        roomFloors.map((room, i) => (
+          <RoomFloorPatch
+            key={`room-floor-${i}-${room.x.toFixed(2)}-${room.z.toFixed(2)}`}
+            room={room}
+            source={texture}
+          />
+        ))}
     </group>
+  );
+}
+
+function RoomFloorPatch({
+  room,
+  source,
+}: {
+  room: { x: number; z: number; width: number; depth: number };
+  source: THREE.Texture;
+}) {
+  const material = useMemo(() => {
+    const map = source.clone();
+    map.wrapS = THREE.RepeatWrapping;
+    map.wrapT = THREE.RepeatWrapping;
+    map.repeat.set(
+      Math.max(1, room.width / (METERS_PER_GRID * 2)),
+      Math.max(1, room.depth / (METERS_PER_GRID * 2)),
+    );
+    map.needsUpdate = true;
+    return new THREE.MeshStandardMaterial({
+      map,
+      color: "#ffffff",
+      roughness: 0.82,
+      metalness: 0.02,
+    });
+  }, [source, room.width, room.depth]);
+
+  useEffect(
+    () => () => {
+      material.map?.dispose();
+      material.dispose();
+    },
+    [material],
+  );
+
+  return (
+    <mesh
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[room.x + room.width / 2, 0.004, room.z + room.depth / 2]}
+      receiveShadow
+      material={material}
+    >
+      <planeGeometry args={[room.width, room.depth]} />
+    </mesh>
   );
 }
 
@@ -359,10 +411,14 @@ function rackPartMaterials(theme: MapObject["rackTheme"]) {
     theme === "black"
       ? { color: "#2a2e34", roughness: 0.48, metalness: 0.32 }
       : { color: "#2f5fbf", roughness: 0.42, metalness: 0.28 };
+  const deck =
+    theme === "black"
+      ? { color: "#e07a2f", roughness: 0.45, metalness: 0.22 }
+      : { color: "#9aa3ad", roughness: 0.58, metalness: 0.28 };
   return {
     rackUpright: upright,
-    rackBeam: { color: "#e07a2f", roughness: 0.45, metalness: 0.22 },
-    rackDeck: { color: "#c5ccd3", roughness: 0.28, metalness: 0.55 },
+    rackBeam: deck,
+    rackDeck: deck,
   } as const;
 }
 
@@ -370,12 +426,14 @@ function RackMesh({
   obj,
   selected,
   rackHeightM,
+  items,
   onSelect,
   onOpen,
 }: {
   obj: MapObject;
   selected: boolean;
   rackHeightM: number;
+  items: ShelfItem[];
   onSelect: () => void;
   onOpen?: () => void;
 }) {
@@ -412,8 +470,8 @@ function RackMesh({
             key={i}
             position={part.position}
             rotation={[part.rotationX ?? 0, 0, 0]}
-            castShadow
-            receiveShadow
+            castShadow={false}
+            receiveShadow={false}
           >
             <boxGeometry args={part.size} />
             <meshStandardMaterial
@@ -426,6 +484,11 @@ function RackMesh({
           </mesh>
         );
       })}
+      <RackShelfItems
+        frame={frame}
+        items={items}
+        frameWidthPx={obj.frameWidth}
+      />
     </group>
   );
 }
@@ -449,7 +512,6 @@ function SimpleBox({
       position={[x, height / 2, z]}
       rotation={[0, rotY, 0]}
       castShadow
-      receiveShadow
       onClick={(e) => {
         e.stopPropagation();
         onSelect();
@@ -505,6 +567,7 @@ function ObjectMesh({
   selected,
   settings,
   clipHeightM,
+  items,
   onSelect,
   onOpen,
 }: {
@@ -512,6 +575,7 @@ function ObjectMesh({
   selected: boolean;
   settings: MapSettings;
   clipHeightM: number;
+  items?: ShelfItem[];
   onSelect: () => void;
   onOpen?: () => void;
 }) {
@@ -554,6 +618,7 @@ function ObjectMesh({
           obj={obj}
           selected={selected}
           rackHeightM={settings.rackHeightM}
+          items={items ?? []}
           onSelect={onSelect}
           onOpen={onOpen}
         />
@@ -571,6 +636,10 @@ function ObjectMesh({
     case "table":
       return (
         <OfficeDeskMesh obj={obj} selected={selected} onSelect={onSelect} />
+      );
+    case "computer_desk":
+      return (
+        <OfficePlainDeskMesh obj={obj} selected={selected} onSelect={onSelect} />
       );
     case "chair":
       return (
@@ -653,32 +722,104 @@ function DefaultWarehouseCamera({
   );
 }
 
+/** Свет всегда смотрит в центр склада — иначе карта теней «ползёт» при правке стен. */
+function WarehouseSun({
+  cx,
+  cz,
+  span,
+  wallH,
+}: {
+  cx: number;
+  cz: number;
+  span: number;
+  wallH: number;
+}) {
+  const lightRef = useRef<THREE.DirectionalLight>(null);
+  const { scene } = useThree();
+  const qcx = Math.round(cx / 2) * 2;
+  const qcz = Math.round(cz / 2) * 2;
+  const shadowSpan = Math.ceil(Math.max(span, 12) / 4) * 4;
+  const height = Math.max(shadowSpan, wallH * 3);
+
+  useLayoutEffect(() => {
+    const light = lightRef.current;
+    if (!light) return;
+    light.target.position.set(qcx, 0, qcz);
+    scene.add(light.target);
+    light.target.updateMatrixWorld();
+    return () => {
+      scene.remove(light.target);
+    };
+  }, [scene, qcx, qcz]);
+
+  return (
+    <directionalLight
+      ref={lightRef}
+      castShadow
+      intensity={1.25}
+      position={[qcx + shadowSpan * 0.55, height, qcz + shadowSpan * 0.4]}
+      shadow-mapSize={[2048, 2048]}
+      shadow-bias={-0.00025}
+      shadow-normalBias={0.035}
+      shadow-radius={2}
+      shadow-camera-near={0.5}
+      shadow-camera-far={shadowSpan * 4}
+      shadow-camera-left={-shadowSpan * 1.15}
+      shadow-camera-right={shadowSpan * 1.15}
+      shadow-camera-top={shadowSpan * 1.15}
+      shadow-camera-bottom={-shadowSpan * 1.15}
+    />
+  );
+}
+
 export function WarehouseViewer3D({
   objects,
   settings,
   selectedId,
   clipHeightM,
+  shelfItems = [],
   onSelect,
   onOpenRack,
 }: Props) {
   const bounds = useMemo(() => sceneBounds(objects), [objects]);
+  const itemsByRack = useMemo(() => {
+    const map = new Map<number, ShelfItem[]>();
+    for (const item of shelfItems) {
+      const list = map.get(item.rackId);
+      if (list) list.push(item);
+      else map.set(item.rackId, [item]);
+    }
+    return map;
+  }, [shelfItems]);
+  const boostedSettings = useMemo<MapSettings>(
+    () => ({
+      ...settings,
+      wallHeightM: settings.wallHeightM * WALL_HEIGHT_BOOST,
+      rackHeightM: settings.rackHeightM * RACK_HEIGHT_BOOST,
+    }),
+    [settings],
+  );
 
   const nonClip = objects.filter((o) => o.type !== "wall" && o.type !== "window");
   const clipOnly = objects.filter((o) => o.type === "wall" || o.type === "window");
   const span = Math.max(bounds.spanX, bounds.spanZ);
-  const lightReach = span * 2.2;
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cz = (bounds.minZ + bounds.maxZ) / 2;
-  const wallH = settings.wallHeightM;
+  const wallH = boostedSettings.wallHeightM;
   const camH = Math.max(span * 0.86, wallH * 2.5);
   const camDist = span * 0.92;
+
+  const roomFloors = useMemo(
+    () => detectEnclosedRoomFloors(objects),
+    [objects],
+  );
 
   return (
     <div className="viewer-3d">
       <Canvas
         shadows={{ type: THREE.PCFSoftShadowMap }}
-        dpr={typeof window !== "undefined" && window.innerWidth < 900 ? [1, 1.5] : [1, 2]}
-        gl={{ antialias: true }}
+        dpr={1}
+        gl={{ antialias: false, powerPreference: "high-performance" }}
         camera={{
           position: [
             cx + camDist * 0.38,
@@ -693,26 +834,14 @@ export function WarehouseViewer3D({
       >
         <color attach="background" args={[SCENE_BG]} />
         <fog attach="fog" args={[SCENE_BG, span * 4.5, span * 14]} />
-        <hemisphereLight args={["#efe8dc", "#2a332e", 1.05]} />
-        <directionalLight
-          castShadow
-          intensity={1.25}
-          position={[cx + span * 0.85, Math.max(span, wallH * 3), cz + span * 0.65]}
-          shadow-mapSize={
-            typeof window !== "undefined" && window.innerWidth < 900
-              ? [1024, 1024]
-              : [2048, 2048]
-          }
-          shadow-bias={-0.00015}
-          shadow-normalBias={0.012}
-          shadow-camera-near={0.05}
-          shadow-camera-far={lightReach}
-          shadow-camera-left={-span * 1.15}
-          shadow-camera-right={span * 1.15}
-          shadow-camera-top={span * 1.15}
-          shadow-camera-bottom={-span * 1.15}
+        <hemisphereLight args={["#efe8dc", "#2a332e", 1.15]} />
+        <ambientLight intensity={0.22} />
+        <WarehouseSun cx={cx} cz={cz} span={span} wallH={wallH} />
+        <FloorPlane
+          bounds={bounds}
+          floorUrl={settings.floorUrl}
+          roomFloors={roomFloors}
         />
-        <FloorPlane bounds={bounds} floorUrl={settings.floorUrl} />
 
         <group>
           {nonClip.map((obj) => (
@@ -720,8 +849,9 @@ export function WarehouseViewer3D({
               key={obj.id}
               obj={obj}
               selected={selectedId === obj.id}
-              settings={settings}
+              settings={boostedSettings}
               clipHeightM={1e9}
+              items={obj.type === "rack" ? itemsByRack.get(obj.id) : undefined}
               onSelect={() => onSelect(obj.id)}
               onOpen={
                 obj.type === "rack" ? () => onOpenRack?.(obj.id) : undefined
@@ -736,7 +866,7 @@ export function WarehouseViewer3D({
               key={obj.id}
               obj={obj}
               selected={selectedId === obj.id}
-              settings={settings}
+              settings={boostedSettings}
               clipHeightM={clipHeightM}
               onSelect={() => onSelect(obj.id)}
             />

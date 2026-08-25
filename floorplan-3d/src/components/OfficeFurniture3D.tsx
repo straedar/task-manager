@@ -124,7 +124,7 @@ export function OfficeDeskMesh({
         onSelect();
       }}
     >
-      <mesh position={[0, topY, topZ]} castShadow receiveShadow>
+      <mesh position={[0, topY, topZ]} castShadow>
         <boxGeometry args={[along, topT, topDepth]} />
         <WoodMat selected={selected} />
       </mesh>
@@ -154,6 +154,54 @@ export function OfficeDeskMesh({
         <OFrame depth={frameDepth} height={topY} tube={tube} />
       </group>
       <group position={[along / 2 - frameInset, 0, topZ]}>
+        <OFrame depth={frameDepth} height={topY} tube={tube} />
+      </group>
+    </group>
+  );
+}
+
+/**
+ * Стол без перегородки.
+ * geometry: только столешница + ножки (O-рамы).
+ */
+export function OfficePlainDeskMesh({
+  obj,
+  selected,
+  onSelect,
+}: {
+  obj: MapObject;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const { alongM: along, deepM: deep, rotY } = deskPose(obj);
+  const cx = worldToMeters(obj.x) + worldToMeters(obj.width) / 2;
+  const cz = worldToMeters(obj.y) + worldToMeters(obj.height) / 2;
+
+  const topY = DESK_TOP_H_M;
+  const topT = 0.036 * 3;
+
+  const tube = Math.min(0.045 * 3, Math.min(along, deep) * 0.04);
+  const frameInset = tube * 0.5 + 0.02;
+  const frameDepth = deep * 0.92;
+
+  return (
+    <group
+      position={[cx, 0, cz]}
+      rotation={[0, rotY, 0]}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect();
+      }}
+    >
+      <mesh position={[0, topY, 0]} castShadow>
+        <boxGeometry args={[along, topT, deep]} />
+        <WoodMat selected={selected} />
+      </mesh>
+
+      <group position={[-along / 2 + frameInset, 0, 0]}>
+        <OFrame depth={frameDepth} height={topY} tube={tube} />
+      </group>
+      <group position={[along / 2 - frameInset, 0, 0]}>
         <OFrame depth={frameDepth} height={topY} tube={tube} />
       </group>
     </group>

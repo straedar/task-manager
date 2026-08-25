@@ -268,8 +268,8 @@ const PART_MATERIALS: Record<BoxPart["role"], { color: string; roughness: number
   door: { color: "#8a5a36", roughness: 0.55, metalness: 0.05 },
   glass: { color: "#9ec9dc", roughness: 0.08, metalness: 0.15, transparent: true, opacity: 0.32 },
   rackUpright: { color: "#2f5fbf", roughness: 0.42, metalness: 0.28 },
-  rackBeam: { color: "#e07a2f", roughness: 0.45, metalness: 0.22 },
-  rackDeck: { color: "#c5ccd3", roughness: 0.28, metalness: 0.55 },
+  rackBeam: { color: "#9aa3ad", roughness: 0.58, metalness: 0.28 },
+  rackDeck: { color: "#9aa3ad", roughness: 0.58, metalness: 0.28 },
 };
 
 function Openings({

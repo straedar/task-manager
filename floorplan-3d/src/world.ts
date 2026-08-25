@@ -63,30 +63,32 @@ export function rackPose(obj: Pick<MapObject, "width" | "height" | "rotation">):
 
 /**
  * Ориентация стола: перегородка всегда на длинной стороне (как фронт стеллажа).
- * Локально: along = длина перегородки (X), deep = глубина столешницы (Z).
+ * rotation 180° переносит перегородку на противоположную длинную кромку.
+ * Локально: along = длина перегородки (X), deep = глубина столешницы (Z),
+ * перегородка на −Z.
  */
-export function deskPose(obj: Pick<MapObject, "width" | "height">): {
+export function deskPose(
+  obj: Pick<MapObject, "width" | "height" | "rotation">,
+): {
   alongM: number;
   deepM: number;
   rotY: number;
-  /** Перегородка на «северной» / «западной» длинной кромке в координатах карты. */
-  partitionOn: "n" | "w";
+  partitionOn: RackFront;
 } {
-  const w = worldToMeters(obj.width);
-  const d = worldToMeters(obj.height);
-  if (obj.width >= obj.height) {
-    return {
-      alongM: Math.max(w, 0.4),
-      deepM: Math.max(d, 0.25),
-      rotY: 0,
-      partitionOn: "n",
-    };
-  }
+  const pose = rackPose(obj);
+  const partitionOn: RackFront =
+    pose.front === "s"
+      ? "n"
+      : pose.front === "n"
+        ? "s"
+        : pose.front === "e"
+          ? "w"
+          : "e";
   return {
-    alongM: Math.max(d, 0.4),
-    deepM: Math.max(w, 0.25),
-    rotY: Math.PI / 2,
-    partitionOn: "w",
+    alongM: pose.alongM,
+    deepM: pose.deepM,
+    rotY: pose.rotY,
+    partitionOn,
   };
 }
 
@@ -146,12 +148,18 @@ export function rotateMapObject90(obj: MapObject): Partial<MapObject> {
   const cx = obj.x + obj.width / 2;
   const cy = obj.y + obj.height / 2;
 
-  if (obj.type === "rack" || obj.type === "pallet" || obj.type === "table") {
+  if (
+    obj.type === "rack" ||
+    obj.type === "pallet" ||
+    obj.type === "table" ||
+    obj.type === "computer_desk"
+  ) {
     let width = obj.height;
     let height = obj.width;
     // Квадратный стеллаж/паллет — слегка удлиняем, чтобы ориентация была видна.
     if (
       obj.type !== "table" &&
+      obj.type !== "computer_desk" &&
       Math.abs(width - height) < 1
     ) {
       width = Math.max(GRID * 2, height + GRID);
@@ -163,7 +171,12 @@ export function rotateMapObject90(obj: MapObject): Partial<MapObject> {
       y: snapToGrid(cy - height / 2),
       width: snapToGrid(width) || width,
       height: snapToGrid(height) || height,
-      rotation: obj.type === "table" ? 0 : flip ? 180 : 0,
+      rotation:
+        obj.type === "table" || obj.type === "computer_desk"
+          ? 0
+          : flip
+            ? 180
+            : 0,
     };
   }
 
@@ -273,13 +286,26 @@ export function normalizeSegmentObject<T extends MapObject>(obj: T): T {
 
 export function segmentNeedsNormalize(obj: MapObject): boolean {
   if (obj.type !== "wall" && obj.type !== "window") return false;
-  const n = normalizeSegmentObject(obj);
-  return (
-    n.x !== obj.x ||
-    n.y !== obj.y ||
-    n.width !== obj.width ||
-    n.height !== obj.height
-  );
+
+  // normalizeSegmentObject исторически приводил "старые тонкие" стены,
+  // где координаты хранились в другом формате (ось вместо границы).
+  // Сейчас новые стены создаются через edge-based координаты,
+  // и повторная нормализация будет смещать их.
+  const EPS = 0.0001;
+  const alignedX = Math.abs(obj.x - snapToGrid(obj.x)) < EPS;
+  const alignedY = Math.abs(obj.y - snapToGrid(obj.y)) < EPS;
+  const horizontal = obj.width >= obj.height;
+
+  if (horizontal) {
+    // Для горизонтальных стен ожидаем "толщину" ровно в 1 GRID (edge-based y кратен GRID).
+    if (Math.abs(obj.height - GRID) < EPS && alignedY) return false;
+  } else {
+    // Для вертикальных стен ожидаем width = 1 GRID (edge-based x кратен GRID).
+    if (Math.abs(obj.width - GRID) < EPS && alignedX) return false;
+  }
+
+  // Любое другое состояние считаем потенциально "старым" и требующим нормализации.
+  return true;
 }
 
 export function clampScale(scale: number): number {
@@ -292,6 +318,7 @@ export function snapsToMapGrid(type: ObjectType): boolean {
     type === "pallet" ||
     type === "zone" ||
     type === "table" ||
+    type === "computer_desk" ||
     type === "wall" ||
     type === "window"
   );
@@ -307,6 +334,8 @@ export function minSize(type: ObjectType): { minSide: number; minLong: number } 
     case "chair":
       return { minSide: GRID * 6, minLong: GRID * 6 };
     case "table":
+      return { minSide: GRID, minLong: GRID * 2 };
+    case "computer_desk":
       return { minSide: GRID, minLong: GRID * 2 };
     default:
       return { minSide: GRID, minLong: GRID };
@@ -448,6 +477,19 @@ export function defaultObjectAt(
     case "table":
       return {
         type,
+        label: "Компьютерный стол",
+        x,
+        y,
+        width: GRID * 13,
+        height: GRID * 7,
+        shelvesCount: null,
+        rotation: 0,
+        frameWidth: null,
+        rackTheme: null,
+      };
+    case "computer_desk":
+      return {
+        type,
         label: "Стол",
         x,
         y,
@@ -482,6 +524,7 @@ export const OBJECT_FILL: Record<ObjectType, string> = {
   window: "#7eb6d4",
   door: "#a67c52",
   table: "#cbb892",
+  computer_desk: "#bfa67f",
   chair: "#2a2e34",
 };
 
@@ -498,6 +541,7 @@ export const TOOL_LABELS: { type: ObjectType; label: string }[] = [
   { type: "rack", label: "Стеллаж" },
   { type: "pallet", label: "Паллет" },
   { type: "zone", label: "Жёлтая зона" },
-  { type: "table", label: "Стол" },
+  { type: "table", label: "Компьютерный стол" },
+  { type: "computer_desk", label: "Стол" },
   { type: "chair", label: "Кресло" },
 ];

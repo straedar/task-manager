@@ -21,6 +21,8 @@ export type RackFrame = {
   post: number;
   beamH: number;
   deckT: number;
+  /** Запас сзади (0 — без задней стенки). */
+  backT: number;
   innerW: number;
   innerD: number;
   hx: number;
@@ -51,13 +53,14 @@ export function buildRackFrame(
   const along = Math.max(alongM, 0.4);
   const deep = Math.max(deepM, 0.3);
   const levelsN = Math.max(1, Math.min(40, Math.round(shelfCount) || 5));
-  const height = clamp(heightM, 1.2, 6);
+  const height = clamp(heightM, 1.2, 12);
   const scale = height / mmToM(REAL_HEIGHT_MM);
   const post = clamp(mmToM(REAL_POST_MM) * scale, 0.03, 0.07);
   const beamH = clamp(mmToM(REAL_BEAM_MM) * scale, 0.025, 0.055);
   const deckT = clamp(mmToM(REAL_DECK_MM) * scale, 0.012, 0.03);
   const hx = along / 2 - post / 2;
   const hz = deep / 2 - post / 2;
+  const backT = 0;
   const innerW = Math.max(along - post * 2, along * 0.55);
   const innerD = Math.max(deep - post * 2, deep * 0.5);
 
@@ -91,6 +94,7 @@ export function buildRackFrame(
     post,
     beamH,
     deckT,
+    backT,
     innerW,
     innerD,
     hx,
@@ -131,7 +135,7 @@ export function buildRackParts(frame: RackFrame): RackPart[] {
 
   const yBot = beamH * 0.6;
   const yTop = height - beamH * 0.6;
-  // Кресты только на торцах (±X), не на открытой стороне
+  // Кресты только на торцах (±X), не на открытой стороне (+Z)
   for (const x of [-hx, hx]) {
     parts.push(diagonalYZ(x, yBot, -hz, yTop, hz, braceT));
     parts.push(diagonalYZ(x, yBot, hz, yTop, -hz, braceT));
@@ -199,15 +203,153 @@ export function cartonPoseOnLevel(
     h: Math.min(0.25 * scale, level.clearH * 0.88),
   };
   const spanX = Math.max(frame.innerW - size.w, 0);
-  const spanZ = Math.max(frame.innerD - size.d, 0);
+  const usableD = Math.max(frame.innerD - frame.backT, frame.innerD * 0.55);
+  const spanZ = Math.max(usableD - size.d, 0);
   const a = Math.min(1, Math.max(0, along));
   const d = Math.min(1, Math.max(0, depth));
+  const z0 = -frame.innerD / 2 + frame.backT;
   return {
     position: [
       -frame.innerW / 2 + size.w / 2 + a * spanX,
       level.deckTop + size.h / 2,
-      -frame.innerD / 2 + size.d / 2 + d * spanZ,
+      z0 + size.d / 2 + d * spanZ,
     ] as [number, number, number],
     size: [size.w, size.h, size.d] as [number, number, number],
   };
+}
+
+export type ShelfItemLayoutInput = {
+  id: number;
+  type: "box" | "container" | "cell" | "stack";
+  widthRatio: number;
+  posX: number;
+  shelfIndex: number;
+  depthRow: number;
+  stackOrder: number;
+};
+
+export type ShelfItemPose = {
+  itemId: number;
+  type: ShelfItemLayoutInput["type"];
+  position: [number, number, number];
+  size: [number, number, number];
+};
+
+/** Как в меню стеллажа: коробка ≈ высота полки × widthRatio. */
+const INTERIOR_SHELF_H_PX = 147;
+const INTERIOR_STACK_MIN_PX = 56;
+const INTERIOR_BOX_MIN_PX = 24;
+
+function interiorHeightFactor(type: ShelfItemLayoutInput["type"]) {
+  return type === "stack" ? 0.55 : 0.99;
+}
+
+function interiorPixelWidth(
+  type: ShelfItemLayoutInput["type"],
+  widthRatio: number,
+) {
+  const wr = Math.max(0.05, widthRatio || 1);
+  return Math.max(
+    type === "stack" ? INTERIOR_STACK_MIN_PX : INTERIOR_BOX_MIN_PX,
+    INTERIOR_SHELF_H_PX * interiorHeightFactor(type) * wr,
+  );
+}
+
+function levelForShelfIndex(frame: RackFrame, shelfIndex: number): RackLevel | null {
+  const idx = Math.max(0, (shelfIndex || 1) - 1);
+  if (frame.levels[idx]) return frame.levels[idx]!;
+  const last = frame.levels[frame.levels.length - 1];
+  if (!last) return null;
+  const clearH = last.clearH;
+  return {
+    index: idx,
+    beamY: frame.height - frame.beamH / 2,
+    deckTop: frame.height,
+    clearH,
+  };
+}
+
+/** Раскладка как в меню: коробка ≈ квадрат на высоту проёма, глубина на всю полку. */
+export function layoutShelfItemsOnRack(
+  frame: RackFrame,
+  items: ShelfItemLayoutInput[],
+  _frameWidthPx?: number | null,
+): ShelfItemPose[] {
+  const out: ShelfItemPose[] = [];
+  const byShelf = new Map<string, ShelfItemLayoutInput[]>();
+  for (const item of items) {
+    const key = `${item.shelfIndex}:${item.depthRow}`;
+    const list = byShelf.get(key);
+    if (list) list.push(item);
+    else byShelf.set(key, [item]);
+  }
+
+  const maxRow = Math.max(1, ...items.map((i) => i.depthRow || 1));
+  const usableD = Math.max(frame.innerD - frame.backT, frame.innerD * 0.55);
+  const z0 = -frame.innerD / 2 + frame.backT;
+
+  for (const group of byShelf.values()) {
+    group.sort(
+      (a, b) =>
+        a.posX - b.posX || a.stackOrder - b.stackOrder || a.id - b.id,
+    );
+    const level = levelForShelfIndex(frame, group[0]?.shelfIndex ?? 1);
+    if (!level) continue;
+    const depthRow = group[0]?.depthRow ?? 1;
+    const bayH = Math.max(0.08, level.clearH);
+
+    const columns: ShelfItemLayoutInput[][] = [];
+    for (const item of group) {
+      const prev = columns[columns.length - 1];
+      if (prev && prev[0] && prev[0].posX === item.posX) prev.push(item);
+      else columns.push([item]);
+    }
+
+    const pxToM = bayH / INTERIOR_SHELF_H_PX;
+    const raw = columns.map((col) => {
+      const colPx = Math.max(
+        ...col.map((item) => interiorPixelWidth(item.type, item.widthRatio)),
+      );
+      return {
+        col,
+        w: colPx * pxToM,
+        xLeft: col[0]!.posX * pxToM,
+      };
+    });
+    let maxRight = 0;
+    for (const entry of raw) {
+      maxRight = Math.max(maxRight, entry.xLeft + entry.w);
+    }
+    const fit = maxRight > frame.innerW ? frame.innerW / maxRight : 1;
+
+    const rowSpan = usableD / maxRow;
+    const d = Math.max(0.05, rowSpan * 0.92);
+    const z = z0 + (depthRow - 0.5) * rowSpan;
+
+    for (const entry of raw) {
+      const stackN = Math.max(1, entry.col.length);
+      const w = Math.max(0.05, entry.w * fit);
+      const x =
+        -frame.innerW / 2 + entry.xLeft * fit + w / 2;
+      const pileH = Math.max(0.05, bayH * 0.92);
+      const gap = 0.006;
+      const slotH = Math.max(0.04, (pileH - gap * (stackN - 1)) / stackN);
+
+      for (const item of entry.col) {
+        const factor = interiorHeightFactor(item.type);
+        const itemH = clamp(slotH * (factor / 0.99), 0.04, slotH);
+        out.push({
+          itemId: item.id,
+          type: item.type,
+          position: [
+            x,
+            level.deckTop + itemH / 2 + item.stackOrder * (slotH + gap),
+            z,
+          ],
+          size: [w, itemH, d],
+        });
+      }
+    }
+  }
+  return out;
 }

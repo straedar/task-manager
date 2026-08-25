@@ -9,6 +9,8 @@ export type AuthUser = {
   canEditShelves?: boolean;
   /** Если true — правки полок только после «Подтвердить». */
   requireShelfConfirm?: boolean;
+  /** Корневой админ TaskMaster. */
+  isRoot?: boolean;
 };
 
 export type ObjectType =

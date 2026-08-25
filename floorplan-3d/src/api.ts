@@ -9,6 +9,8 @@ export type AuthUser = {
   canEditShelves?: boolean;
   /** Если true — правки полок только после «Подтвердить». */
   requireShelfConfirm?: boolean;
+  /** Корневой админ TaskMaster. */
+  isRoot?: boolean;
 };
 
 export type ObjectType =
@@ -19,6 +21,7 @@ export type ObjectType =
   | "window"
   | "door"
   | "table"
+  | "computer_desk"
   | "chair";
 
 export type RackTheme = "blue" | "black";
@@ -189,6 +192,10 @@ export function deleteObject(id: number) {
 
 export function listShelfItems(rackId: number) {
   return requestJson<ShelfItem[]>(`/racks/${rackId}/items`);
+}
+
+export function listAllShelfItems() {
+  return requestJson<ShelfItem[]>("/shelf-items");
 }
 
 export function createShelfItem(

@@ -1139,16 +1139,10 @@ body.resizing-rack {
   height: 14px;
   width: 100%;
   flex: 0 0 auto;
-  background: linear-gradient(180deg, #f0a04a 0%, #d97820 55%, #b85a14 100%);
-  border-top: 1px solid rgba(255, 220, 170, 0.45);
-  border-bottom: 1px solid rgba(90, 36, 8, 0.45);
+  background: linear-gradient(180deg, #c5ccd4 0%, #9aa3ad 55%, #7d858e 100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.35);
+  border-bottom: 1px solid rgba(40, 48, 56, 0.35);
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
-}
-
-.rack-theme-blue .shelf-plank {
-  background: linear-gradient(180deg, #7eb6d4 0%, #5ba3c9 55%, #3a7a9a 100%);
-  border-top: 1px solid rgba(200, 230, 245, 0.45);
-  border-bottom: 1px solid rgba(20, 50, 70, 0.45);
 }
 
 .rack-theme-black .shelf-plank {
@@ -1199,7 +1193,7 @@ body.resizing-rack {
 }
 
 .rack-theme-swatch-blue {
-  background: linear-gradient(135deg, #3a5568 45%, #5ba3c9 45%);
+  background: linear-gradient(135deg, #2f5fbf 45%, #9aa3ad 45%);
 }
 
 .rack-theme-swatch-black {
