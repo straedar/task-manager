@@ -72,6 +72,121 @@ function snapRackSize(value: number) {
   return Math.min(RACK_SIZE_MAX, Math.max(RACK_SIZE_MIN, snapped || RACK_SIZE_MIN));
 }
 
+/** Ресайз по сетке: неподвижный край остаётся на месте. */
+function snapGridBox(
+  start: { x: number; y: number; width: number; height: number },
+  next: { x: number; y: number; width: number; height: number },
+  anchor?: string | null,
+  minSide = RACK_SIZE_MIN,
+) {
+  const startRight = start.x + start.width;
+  const startBottom = start.y + start.height;
+  const nextRight = next.x + next.width;
+  const nextBottom = next.y + next.height;
+
+  const anchorName = anchor ?? "";
+  const moveLeft = anchorName.includes("left");
+  const moveRight = anchorName.includes("right");
+  const moveTop = anchorName.includes("top");
+  const moveBottom = anchorName.includes("bottom");
+
+  const fallLeft =
+    !anchorName &&
+    Math.abs(next.x - start.x) >= Math.abs(nextRight - startRight);
+  const fallRight =
+    !anchorName &&
+    Math.abs(nextRight - startRight) > Math.abs(next.x - start.x);
+  const fallTop =
+    !anchorName &&
+    Math.abs(next.y - start.y) >= Math.abs(nextBottom - startBottom);
+  const fallBottom =
+    !anchorName &&
+    Math.abs(nextBottom - startBottom) > Math.abs(next.y - start.y);
+
+  const doLeft = moveLeft || fallLeft;
+  const doRight = moveRight || fallRight;
+  const doTop = moveTop || fallTop;
+  const doBottom = moveBottom || fallBottom;
+
+  let left: number;
+  let right: number;
+  let top: number;
+  let bottom: number;
+
+  if (doLeft && !doRight) {
+    right = snapToGrid(startRight);
+    left = right - snapRackSize(right - next.x);
+  } else if (doRight && !doLeft) {
+    left = snapToGrid(start.x);
+    right = left + snapRackSize(nextRight - left);
+  } else if (doLeft && doRight) {
+    left = snapToGrid(next.x);
+    right = left + snapRackSize(nextRight - next.x);
+  } else {
+    left = snapToGrid(start.x);
+    right = left + snapRackSize(start.width);
+  }
+
+  if (doTop && !doBottom) {
+    bottom = snapToGrid(startBottom);
+    top = bottom - snapRackSize(bottom - next.y);
+  } else if (doBottom && !doTop) {
+    top = snapToGrid(start.y);
+    bottom = top + snapRackSize(nextBottom - top);
+  } else if (doTop && doBottom) {
+    top = snapToGrid(next.y);
+    bottom = top + snapRackSize(nextBottom - next.y);
+  } else {
+    top = snapToGrid(start.y);
+    bottom = top + snapRackSize(start.height);
+  }
+
+  return {
+    x: left,
+    y: top,
+    width: Math.max(minSide, right - left),
+    height: Math.max(minSide, bottom - top),
+  };
+}
+
+function absBoxToWorld(
+  box: { x: number; y: number; width: number; height: number },
+  stage: {
+    x: () => number;
+    y: () => number;
+    scaleX: () => number;
+    scaleY: () => number;
+  },
+) {
+  const sx = stage.scaleX() || 1;
+  const sy = stage.scaleY() || 1;
+  return {
+    x: (box.x - stage.x()) / sx,
+    y: (box.y - stage.y()) / sy,
+    width: box.width / sx,
+    height: box.height / sy,
+  };
+}
+
+function worldBoxToAbs(
+  box: { x: number; y: number; width: number; height: number },
+  stage: {
+    x: () => number;
+    y: () => number;
+    scaleX: () => number;
+    scaleY: () => number;
+  },
+) {
+  const sx = stage.scaleX() || 1;
+  const sy = stage.scaleY() || 1;
+  return {
+    x: box.x * sx + stage.x(),
+    y: box.y * sy + stage.y(),
+    width: box.width * sx,
+    height: box.height * sy,
+  };
+}
+
 function aabbIntersect(
   a: { x: number; y: number; width: number; height: number },
   b: { x: number; y: number; width: number; height: number },
@@ -432,6 +547,13 @@ function MapObjectShape({
   const shapeRef = useRef<Konva.Group>(null);
   const trRef = useRef<Konva.Transformer>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
+  const transformStartRef = useRef<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const transformAnchorRef = useRef<string | null>(null);
   const longPressRef = useRef<{
     timer: number;
     x: number;
@@ -449,7 +571,7 @@ function MapObjectShape({
       trRef.current.nodes([shapeRef.current]);
       trRef.current.getLayer()?.batchDraw();
     }
-  }, [showTransform, obj.width, obj.height, obj.x, obj.y, obj.rotation]);
+  }, [showTransform, canRotateHandle]);
 
   const clearLongPress = () => {
     if (longPressRef.current) {
@@ -536,6 +658,20 @@ function MapObjectShape({
             onChange({ x, y });
           }
         }}
+        onTransformStart={() => {
+          transformStartRef.current = {
+            x: obj.x,
+            y: obj.y,
+            width: obj.width,
+            height: obj.height,
+          };
+          transformAnchorRef.current =
+            trRef.current?.getActiveAnchor() ?? null;
+        }}
+        onTransform={() => {
+          const anchor = trRef.current?.getActiveAnchor();
+          if (anchor) transformAnchorRef.current = anchor;
+        }}
         onTransformEnd={() => {
           if (!canEdit) return;
           const node = shapeRef.current;
@@ -560,10 +696,25 @@ function MapObjectShape({
           if (scaleX < 0) nextX += baseW * scaleX;
           if (scaleY < 0) nextY += baseH * scaleY;
           if (gridSnap) {
-            nextX = snapToGrid(nextX);
-            nextY = snapToGrid(nextY);
-            nextW = Math.max(limits.minSide, snapToGrid(nextW));
-            nextH = Math.max(limits.minSide, snapToGrid(nextH));
+            const start = transformStartRef.current ?? {
+              x: obj.x,
+              y: obj.y,
+              width: obj.width,
+              height: obj.height,
+            };
+            const snapped = snapGridBox(
+              start,
+              { x: nextX, y: nextY, width: nextW, height: nextH },
+              transformAnchorRef.current,
+              limits.minSide,
+            );
+            nextX = snapped.x;
+            nextY = snapped.y;
+            nextW = snapped.width;
+            nextH = snapped.height;
+          } else {
+            nextX = Math.round(nextX);
+            nextY = Math.round(nextY);
           }
           // Для стола — длинная сторона не короче minLong (как на сервере).
           if (obj.type === "table" || obj.type === "computer_desk") {
@@ -578,6 +729,8 @@ function MapObjectShape({
               else nextH = limits.minSide;
             }
           }
+          transformStartRef.current = null;
+          transformAnchorRef.current = null;
           node.width(nextW);
           node.height(nextH);
           node.position({ x: nextX, y: nextY });
@@ -612,8 +765,61 @@ function MapObjectShape({
           borderStroke="#f08a2e"
           anchorStroke="#f08a2e"
           anchorFill="#1a1c20"
+          anchorSize={10}
+          enabledAnchors={[
+            "top-left",
+            "top-right",
+            "bottom-left",
+            "bottom-right",
+            "middle-left",
+            "middle-right",
+            "top-center",
+            "bottom-center",
+          ]}
           boundBoxFunc={(oldBox, newBox) => {
-            if (Math.min(newBox.width, newBox.height) < limits.minSide) return oldBox;
+            const stage = shapeRef.current?.getStage();
+            if (!stage) return oldBox;
+            if (newBox.width < 0 || newBox.height < 0) return oldBox;
+            const sx = Math.abs(stage.scaleX() || 1);
+            const sy = Math.abs(stage.scaleY() || 1);
+
+            if (gridSnap) {
+              const start =
+                transformStartRef.current ?? absBoxToWorld(oldBox, stage);
+              const next = absBoxToWorld(newBox, stage);
+              if (
+                next.width < limits.minSide * 0.35 ||
+                next.height < limits.minSide * 0.35
+              ) {
+                return oldBox;
+              }
+              const anchor =
+                trRef.current?.getActiveAnchor() ??
+                transformAnchorRef.current;
+              if (anchor) transformAnchorRef.current = anchor;
+              const snapped = snapGridBox(
+                start,
+                next,
+                anchor,
+                limits.minSide,
+              );
+              const abs = worldBoxToAbs(snapped, stage);
+              return {
+                ...newBox,
+                x: abs.x,
+                y: abs.y,
+                width: Math.max(1, abs.width),
+                height: Math.max(1, abs.height),
+              };
+            }
+
+            if (
+              Math.min(newBox.width / sx, newBox.height / sy) <
+                limits.minSide ||
+              Math.max(newBox.width / sx, newBox.height / sy) < limits.minLong
+            ) {
+              return oldBox;
+            }
             return newBox;
           }}
         />
@@ -898,6 +1104,15 @@ export function MapEditor2D({
   const canStartEmptyGesture = (target: Konva.Node, stage: Konva.Stage) => {
     if (target === stage) return true;
     const name = target.name?.() ?? "";
+    // Якоря/рамка Transformer — не «пустое» место (иначе сброс выделения / пан).
+    if (
+      name === "_back" ||
+      name.startsWith("_anchor") ||
+      target.getParent()?.getClassName() === "Transformer" ||
+      target.getClassName() === "Transformer"
+    ) {
+      return false;
+    }
     if (name === "map-object" || target.findAncestor(".map-object")) return false;
     return true;
   };

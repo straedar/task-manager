@@ -109,6 +109,7 @@ export default function App() {
   const [mode, setMode] = useState<UiMode>("view");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [clipHeightM, setClipHeightM] = useState(DEFAULT_SETTINGS.wallHeightM);
+  const [occlusionMasking, setOcclusionMasking] = useState(true);
   const [openedRackId, setOpenedRackId] = useState<number | null>(null);
   const settingsTimer = useRef<number | null>(null);
   const pendingSettings = useRef<Partial<MapSettings>>({});
@@ -728,6 +729,8 @@ export default function App() {
               settings={settings}
               selectedId={selectedIds[0] ?? null}
               clipHeightM={clipHeightM}
+              occlusionMasking={occlusionMasking}
+              onOcclusionMaskingChange={setOcclusionMasking}
               shelfItems={shelfItems}
               onSelect={(id) => setSelectedIds(id == null ? [] : [id])}
               onOpenRack={setOpenedRackId}

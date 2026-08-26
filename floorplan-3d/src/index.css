@@ -281,6 +281,13 @@ input {
   accent-color: var(--accent);
 }
 
+.map-setting-check input[type="checkbox"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .clip-hint {
   font-size: 0.78rem;
   color: var(--muted);
@@ -522,6 +529,32 @@ input {
   display: block;
   width: 100% !important;
   height: 100% !important;
+}
+
+.viewer-occlusion-toggle {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  z-index: 5;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  background: rgba(16, 20, 18, 0.82);
+  color: #e8efe9;
+  font: 600 0.82rem/1.2 system-ui, sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.viewer-occlusion-toggle:hover {
+  border-color: rgba(240, 138, 46, 0.55);
+  color: #fff;
+}
+
+.viewer-occlusion-toggle.active {
+  border-color: rgba(240, 138, 46, 0.7);
+  background: rgba(240, 138, 46, 0.22);
 }
 
 .viewer-empty {

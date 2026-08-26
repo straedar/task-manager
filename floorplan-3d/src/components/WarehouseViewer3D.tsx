@@ -1,5 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Grid, OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
@@ -29,10 +38,199 @@ type Props = {
   settings: MapSettings;
   selectedId: number | null;
   clipHeightM: number;
+  /** Soft-hide walls that face the camera and block the view. */
+  occlusionMasking?: boolean;
+  onOcclusionMaskingChange?: (enabled: boolean) => void;
   shelfItems?: ShelfItem[];
   onSelect: (id: number | null) => void;
   onOpenRack?: (id: number) => void;
 };
+
+type OcclusionTarget = { x: number; y: number; z: number };
+
+type OcclusionEntry = {
+  mesh: THREE.Mesh;
+  material: THREE.MeshStandardMaterial;
+  baseOpacity: number;
+  /** Center of wall slab in XZ. */
+  px: number;
+  pz: number;
+  /** Outward normal (thickness axis). */
+  nx: number;
+  nz: number;
+  /** Unit tangent along the wall run. */
+  tx: number;
+  tz: number;
+  halfLen: number;
+  halfThick: number;
+  y0: number;
+  y1: number;
+};
+
+type OcclusionApi = {
+  enabled: boolean;
+  register: (entry: OcclusionEntry) => () => void;
+};
+
+const WallOcclusionContext = createContext<OcclusionApi | null>(null);
+
+/** Horizontal unit normal of a wall slab face (thickness axis). */
+function wallFaceNormal(w: number, d: number, rotY: number): { nx: number; nz: number } {
+  if (w >= d) {
+    return { nx: Math.sin(rotY), nz: Math.cos(rotY) };
+  }
+  return { nx: Math.cos(rotY), nz: -Math.sin(rotY) };
+}
+
+function wallOcclusionEntry(
+  w: number,
+  d: number,
+  x: number,
+  z: number,
+  rotY: number,
+  y0: number,
+  y1: number,
+  mesh: THREE.Mesh,
+  material: THREE.MeshStandardMaterial,
+  baseOpacity: number,
+): OcclusionEntry {
+  const { nx, nz } = wallFaceNormal(w, d, rotY);
+  const along = Math.max(w, d);
+  const cell = worldToMeters(GRID);
+  return {
+    mesh,
+    material,
+    baseOpacity,
+    px: x,
+    pz: z,
+    nx,
+    nz,
+    tx: -nz,
+    tz: nx,
+    halfLen: along / 2,
+    halfThick: cell / 2,
+    y0,
+    y1,
+  };
+}
+
+/**
+ * True when the wall segment sits between camera and target in the floor plan (XZ).
+ * Height is ignored on purpose: from a high orbit the 3D ray often clears the wall top,
+ * but the wall still visually blocks the racks.
+ */
+function wallBlocksTarget(
+  cam: THREE.Vector3,
+  target: OcclusionTarget,
+  wall: OcclusionEntry,
+): boolean {
+  const dx = target.x - cam.x;
+  const dz = target.z - cam.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.12) return false;
+
+  const dirX = dx / dist;
+  const dirZ = dz / dist;
+  const denom = dirX * wall.nx + dirZ * wall.nz;
+  if (Math.abs(denom) < 1e-5) return false;
+
+  const t = ((wall.px - cam.x) * wall.nx + (wall.pz - cam.z) * wall.nz) / denom;
+  // Must be strictly between camera and target.
+  if (t < 0.02 || t > dist - 0.02) return false;
+
+  const ix = cam.x + t * dirX;
+  const iz = cam.z + t * dirZ;
+  const along = Math.abs((ix - wall.px) * wall.tx + (iz - wall.pz) * wall.tz);
+  // Slight pad so segmented walls still catch rays near joints.
+  return along <= wall.halfLen + 0.2;
+}
+
+function applyWallOpacity(entry: OcclusionEntry, opacity: number) {
+  if (opacity < 0.08) {
+    entry.mesh.visible = false;
+    entry.mesh.castShadow = false;
+  } else {
+    entry.mesh.visible = true;
+    entry.mesh.castShadow = opacity > 0.85;
+    entry.material.transparent = opacity < 0.98;
+    entry.material.opacity = opacity;
+    entry.material.depthWrite = opacity > 0.85;
+  }
+}
+
+function WallOcclusionDriver({
+  enabled,
+  entriesRef,
+  targetsRef,
+}: {
+  enabled: boolean;
+  entriesRef: MutableRefObject<Set<OcclusionEntry>>;
+  targetsRef: MutableRefObject<OcclusionTarget[]>;
+}) {
+  const { camera } = useThree();
+
+  useFrame(() => {
+    const entries = entriesRef.current;
+    if (entries.size === 0) return;
+
+    const targets = targetsRef.current;
+
+    if (!enabled || targets.length === 0) {
+      for (const entry of entries) {
+        applyWallOpacity(entry, entry.baseOpacity);
+      }
+      return;
+    }
+
+    for (const entry of entries) {
+      let occludes = false;
+
+      for (const target of targets) {
+        if (wallBlocksTarget(camera.position, target, entry)) {
+          occludes = true;
+          break;
+        }
+      }
+
+      if (!occludes) {
+        applyWallOpacity(entry, entry.baseOpacity);
+        continue;
+      }
+
+      // Hard hide when the wall blocks any rack/furniture.
+      applyWallOpacity(entry, entry.baseOpacity * 0.04);
+    }
+  });
+
+  return null;
+}
+
+function useWallOcclusionRegistration(opts: {
+  meshRef: MutableRefObject<THREE.Mesh | null>;
+  materialRef: MutableRefObject<THREE.MeshStandardMaterial | null>;
+  w: number;
+  d: number;
+  x: number;
+  z: number;
+  rotY: number;
+  y0: number;
+  y1: number;
+  baseOpacity?: number;
+}) {
+  const api = useContext(WallOcclusionContext);
+  const { meshRef, materialRef, w, d, x, z, rotY, y0, y1, baseOpacity = 1 } =
+    opts;
+
+  useLayoutEffect(() => {
+    if (!api) return;
+    const mesh = meshRef.current;
+    const material = materialRef.current;
+    if (!mesh || !material) return;
+    return api.register(
+      wallOcclusionEntry(w, d, x, z, rotY, y0, y1, mesh, material, baseOpacity),
+    );
+  }, [api, meshRef, materialRef, w, d, x, z, rotY, y0, y1, baseOpacity]);
+}
 
 function footprint(obj: MapObject) {
   const w = worldToMeters(obj.width);
@@ -241,6 +439,92 @@ function RoomFloorPatch({
   );
 }
 
+function OccludingWallPart({
+  position,
+  rotationY,
+  size,
+  color,
+  selected,
+  emissiveIntensity,
+  w,
+  d,
+  x,
+  z,
+  rotY,
+  y0,
+  y1,
+  baseOpacity = 1,
+  roughness = 0.78,
+  metalness = 0.02,
+  castShadow = true,
+  receiveShadow = true,
+  onClick,
+}: {
+  position: [number, number, number];
+  rotationY: number;
+  size: [number, number, number];
+  color: string;
+  selected: boolean;
+  emissiveIntensity: number;
+  w: number;
+  d: number;
+  x: number;
+  z: number;
+  rotY: number;
+  y0: number;
+  y1: number;
+  baseOpacity?: number;
+  roughness?: number;
+  metalness?: number;
+  castShadow?: boolean;
+  receiveShadow?: boolean;
+  onClick: (e: { stopPropagation: () => void }) => void;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const materialRef = useRef<THREE.MeshStandardMaterial>(null);
+  useWallOcclusionRegistration({
+    meshRef,
+    materialRef,
+    w,
+    d,
+    x,
+    z,
+    rotY,
+    y0,
+    y1,
+    baseOpacity,
+  });
+
+  useLayoutEffect(() => {
+    const mat = materialRef.current;
+    if (!mat) return;
+    mat.opacity = baseOpacity;
+    mat.transparent = baseOpacity < 0.99;
+    mat.depthWrite = baseOpacity > 0.85;
+  }, [baseOpacity]);
+
+  return (
+    <mesh
+      ref={meshRef}
+      position={position}
+      rotation={[0, rotationY, 0]}
+      castShadow={castShadow}
+      receiveShadow={receiveShadow}
+      onClick={onClick}
+    >
+      <boxGeometry args={size} />
+      <meshStandardMaterial
+        ref={materialRef}
+        color={color}
+        roughness={roughness}
+        metalness={metalness}
+        emissive={selected ? SELECT_EMISSIVE : "#000000"}
+        emissiveIntensity={emissiveIntensity}
+      />
+    </mesh>
+  );
+}
+
 function WallMesh({
   obj,
   selected,
@@ -257,26 +541,28 @@ function WallMesh({
   const { w, d, x, z, rotY } = footprint(obj);
   const band = clipVertical(0, wallHeightM, clipHeightM);
   if (!band) return null;
+  const y0 = band.y - band.h / 2;
+  const y1 = band.y + band.h / 2;
   return (
-    <mesh
+    <OccludingWallPart
       position={[x, band.y, z]}
-      rotation={[0, rotY, 0]}
-      castShadow
-      receiveShadow
+      rotationY={rotY}
+      size={wallSlabSize(w, d, band.h)}
+      color={WALL_COLOR}
+      selected={selected}
+      emissiveIntensity={selected ? 0.18 : 0}
+      w={w}
+      d={d}
+      x={x}
+      z={z}
+      rotY={rotY}
+      y0={y0}
+      y1={y1}
       onClick={(e) => {
         e.stopPropagation();
         onSelect();
       }}
-    >
-      <boxGeometry args={wallSlabSize(w, d, band.h)} />
-      <meshStandardMaterial
-        color={WALL_COLOR}
-        roughness={0.78}
-        metalness={0.02}
-        emissive={selected ? SELECT_EMISSIVE : "#000000"}
-        emissiveIntensity={selected ? 0.18 : 0}
-      />
-    </mesh>
+    />
   );
 }
 
@@ -311,44 +597,65 @@ function WindowMesh({
   };
 
   return (
-    <group rotation={[0, rotY, 0]} position={[x, 0, z]}>
+    <group>
       {sill && (
-        <mesh position={[0, sill.y, 0]} castShadow receiveShadow onClick={onPick}>
-          <boxGeometry args={wallSlabSize(w, d, sill.h)} />
-          <meshStandardMaterial
-            color={WALL_COLOR}
-            roughness={0.78}
-            metalness={0.02}
-            emissive={selected ? SELECT_EMISSIVE : "#000000"}
-            emissiveIntensity={selected ? 0.14 : 0}
-          />
-        </mesh>
+        <OccludingWallPart
+          position={[x, sill.y, z]}
+          rotationY={rotY}
+          size={wallSlabSize(w, d, sill.h)}
+          color={WALL_COLOR}
+          selected={selected}
+          emissiveIntensity={selected ? 0.14 : 0}
+          w={w}
+          d={d}
+          x={x}
+          z={z}
+          rotY={rotY}
+          y0={sill.y - sill.h / 2}
+          y1={sill.y + sill.h / 2}
+          onClick={onPick}
+        />
       )}
       {glass && (
-        <mesh position={[0, glass.y, 0]} onClick={onPick}>
-          <boxGeometry args={wallSlabSize(w, d, glass.h, 0.55)} />
-          <meshStandardMaterial
-            color={selected ? "#d7f3ff" : GLASS_COLOR}
-            transparent
-            opacity={0.32}
-            roughness={0.08}
-            metalness={0.15}
-            emissive={selected ? SELECT_EMISSIVE : "#000000"}
-            emissiveIntensity={selected ? 0.12 : 0}
-          />
-        </mesh>
+        <OccludingWallPart
+          position={[x, glass.y, z]}
+          rotationY={rotY}
+          size={wallSlabSize(w, d, glass.h, 0.55)}
+          color={selected ? "#d7f3ff" : GLASS_COLOR}
+          selected={selected}
+          emissiveIntensity={selected ? 0.12 : 0}
+          w={w}
+          d={d}
+          x={x}
+          z={z}
+          rotY={rotY}
+          y0={glass.y - glass.h / 2}
+          y1={glass.y + glass.h / 2}
+          baseOpacity={0.32}
+          roughness={0.08}
+          metalness={0.15}
+          castShadow={false}
+          receiveShadow={false}
+          onClick={onPick}
+        />
       )}
       {head && (
-        <mesh position={[0, head.y, 0]} castShadow receiveShadow onClick={onPick}>
-          <boxGeometry args={wallSlabSize(w, d, head.h)} />
-          <meshStandardMaterial
-            color={WALL_COLOR}
-            roughness={0.78}
-            metalness={0.02}
-            emissive={selected ? SELECT_EMISSIVE : "#000000"}
-            emissiveIntensity={selected ? 0.14 : 0}
-          />
-        </mesh>
+        <OccludingWallPart
+          position={[x, head.y, z]}
+          rotationY={rotY}
+          size={wallSlabSize(w, d, head.h)}
+          color={WALL_COLOR}
+          selected={selected}
+          emissiveIntensity={selected ? 0.14 : 0}
+          w={w}
+          d={d}
+          x={x}
+          z={z}
+          rotY={rotY}
+          y0={head.y - head.h / 2}
+          y1={head.y + head.h / 2}
+          onClick={onPick}
+        />
       )}
     </group>
   );
@@ -377,30 +684,44 @@ function DoorMesh({
   };
 
   return (
-    <group rotation={[0, rotY, 0]} position={[x, 0, z]}>
+    <group>
       {leaf && (
-        <mesh position={[0, leaf.y, 0]} castShadow receiveShadow onClick={onPick}>
-          <boxGeometry args={wallSlabSize(w, d, leaf.h, 0.45)} />
-          <meshStandardMaterial
-            color={DOOR_COLOR}
-            roughness={0.55}
-            metalness={0.05}
-            emissive={selected ? SELECT_EMISSIVE : "#000000"}
-            emissiveIntensity={selected ? 0.16 : 0}
-          />
-        </mesh>
+        <OccludingWallPart
+          position={[x, leaf.y, z]}
+          rotationY={rotY}
+          size={wallSlabSize(w, d, leaf.h, 0.45)}
+          color={DOOR_COLOR}
+          selected={selected}
+          emissiveIntensity={selected ? 0.16 : 0}
+          w={w}
+          d={d}
+          x={x}
+          z={z}
+          rotY={rotY}
+          y0={leaf.y - leaf.h / 2}
+          y1={leaf.y + leaf.h / 2}
+          roughness={0.55}
+          metalness={0.05}
+          onClick={onPick}
+        />
       )}
       {lintel && (
-        <mesh position={[0, lintel.y, 0]} castShadow receiveShadow onClick={onPick}>
-          <boxGeometry args={wallSlabSize(w, d, lintel.h)} />
-          <meshStandardMaterial
-            color={WALL_COLOR}
-            roughness={0.78}
-            metalness={0.02}
-            emissive={selected ? SELECT_EMISSIVE : "#000000"}
-            emissiveIntensity={selected ? 0.14 : 0}
-          />
-        </mesh>
+        <OccludingWallPart
+          position={[x, lintel.y, z]}
+          rotationY={rotY}
+          size={wallSlabSize(w, d, lintel.h)}
+          color={WALL_COLOR}
+          selected={selected}
+          emissiveIntensity={selected ? 0.14 : 0}
+          w={w}
+          d={d}
+          x={x}
+          z={z}
+          rotY={rotY}
+          y0={lintel.y - lintel.h / 2}
+          y1={lintel.y + lintel.h / 2}
+          onClick={onPick}
+        />
       )}
     </group>
   );
@@ -777,6 +1098,8 @@ export function WarehouseViewer3D({
   settings,
   selectedId,
   clipHeightM,
+  occlusionMasking = true,
+  onOcclusionMaskingChange,
   shelfItems = [],
   onSelect,
   onOpenRack,
@@ -814,6 +1137,61 @@ export function WarehouseViewer3D({
     [objects],
   );
 
+  const occlusionTargets = useMemo<OcclusionTarget[]>(() => {
+    const rackH = boostedSettings.rackHeightM;
+    const targets: OcclusionTarget[] = [];
+    for (const obj of objects) {
+      if (
+        obj.type !== "rack" &&
+        obj.type !== "table" &&
+        obj.type !== "computer_desk" &&
+        obj.type !== "pallet"
+      ) {
+        continue;
+      }
+      const { x, z, w, d } = footprint(obj);
+      const y =
+        obj.type === "rack"
+          ? rackH * 0.45
+          : obj.type === "pallet"
+            ? PALLET_HEIGHT_M * 0.5
+            : 0.4;
+      // Dense XZ samples so long walls catch occlusion from any orbit angle.
+      const ox = Math.max(w * 0.4, 0.15);
+      const oz = Math.max(d * 0.4, 0.15);
+      targets.push(
+        { x, y, z },
+        { x: x - ox, y, z: z - oz },
+        { x: x + ox, y, z: z - oz },
+        { x: x - ox, y, z: z + oz },
+        { x: x + ox, y, z: z + oz },
+        { x: x - ox, y, z },
+        { x: x + ox, y, z },
+        { x, y, z: z - oz },
+        { x, y, z: z + oz },
+      );
+    }
+    return targets;
+  }, [objects, boostedSettings.rackHeightM]);
+
+  const occlusionEntriesRef = useRef(new Set<OcclusionEntry>());
+  const occlusionTargetsRef = useRef<OcclusionTarget[]>([]);
+  useLayoutEffect(() => {
+    occlusionTargetsRef.current = occlusionTargets;
+  }, [occlusionTargets]);
+  const occlusionApi = useMemo<OcclusionApi>(
+    () => ({
+      enabled: occlusionMasking,
+      register: (entry) => {
+        occlusionEntriesRef.current.add(entry);
+        return () => {
+          occlusionEntriesRef.current.delete(entry);
+        };
+      },
+    }),
+    [occlusionMasking],
+  );
+
   return (
     <div className="viewer-3d">
       <Canvas
@@ -843,35 +1221,42 @@ export function WarehouseViewer3D({
           roomFloors={roomFloors}
         />
 
-        <group>
-          {nonClip.map((obj) => (
-            <ObjectMesh
-              key={obj.id}
-              obj={obj}
-              selected={selectedId === obj.id}
-              settings={boostedSettings}
-              clipHeightM={1e9}
-              items={obj.type === "rack" ? itemsByRack.get(obj.id) : undefined}
-              onSelect={() => onSelect(obj.id)}
-              onOpen={
-                obj.type === "rack" ? () => onOpenRack?.(obj.id) : undefined
-              }
-            />
-          ))}
-        </group>
+        <WallOcclusionContext.Provider value={occlusionApi}>
+          <WallOcclusionDriver
+            enabled={occlusionMasking}
+            entriesRef={occlusionEntriesRef}
+            targetsRef={occlusionTargetsRef}
+          />
+          <group>
+            {nonClip.map((obj) => (
+              <ObjectMesh
+                key={obj.id}
+                obj={obj}
+                selected={selectedId === obj.id}
+                settings={boostedSettings}
+                clipHeightM={1e9}
+                items={obj.type === "rack" ? itemsByRack.get(obj.id) : undefined}
+                onSelect={() => onSelect(obj.id)}
+                onOpen={
+                  obj.type === "rack" ? () => onOpenRack?.(obj.id) : undefined
+                }
+              />
+            ))}
+          </group>
 
-        <group>
-          {clipOnly.map((obj) => (
-            <ObjectMesh
-              key={obj.id}
-              obj={obj}
-              selected={selectedId === obj.id}
-              settings={boostedSettings}
-              clipHeightM={clipHeightM}
-              onSelect={() => onSelect(obj.id)}
-            />
-          ))}
-        </group>
+          <group>
+            {clipOnly.map((obj) => (
+              <ObjectMesh
+                key={obj.id}
+                obj={obj}
+                selected={selectedId === obj.id}
+                settings={boostedSettings}
+                clipHeightM={clipHeightM}
+                onSelect={() => onSelect(obj.id)}
+              />
+            ))}
+          </group>
+        </WallOcclusionContext.Provider>
 
         <Grid
           infiniteGrid
@@ -890,6 +1275,21 @@ export function WarehouseViewer3D({
           spanZ={bounds.spanZ}
         />
       </Canvas>
+      {onOcclusionMaskingChange && (
+        <button
+          type="button"
+          className={
+            occlusionMasking
+              ? "viewer-occlusion-toggle active"
+              : "viewer-occlusion-toggle"
+          }
+          aria-pressed={occlusionMasking}
+          title="Скрывать стены, которые перекрывают вид на стеллажи"
+          onClick={() => onOcclusionMaskingChange(!occlusionMasking)}
+        >
+          Маскировка стен: {occlusionMasking ? "вкл" : "выкл"}
+        </button>
+      )}
       {objects.length === 0 && (
         <p className="viewer-empty">
           Карта пуста — переключитесь в редактирование и нарисуйте склад
