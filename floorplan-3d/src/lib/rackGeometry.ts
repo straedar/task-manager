@@ -324,7 +324,8 @@ export function layoutShelfItemsOnRack(
 
     const rowSpan = usableD / maxRow;
     const d = Math.max(0.05, rowSpan * 0.92);
-    const z = z0 + (depthRow - 0.5) * rowSpan;
+    // Ряд 1 = фронт (+Z), больший ряд — глубже к задней стенке
+    const z = z0 + (maxRow - depthRow + 0.5) * rowSpan;
 
     for (const entry of raw) {
       const stackN = Math.max(1, entry.col.length);

@@ -118,19 +118,6 @@ export function shelfBoxInstanceMaterial(
   return material;
 }
 
-export function shelfSolidInstanceMaterial(color: string) {
-  const key = `solid:${color}`;
-  const hit = instanceMatCache.get(key);
-  if (hit) return hit;
-  const material = new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.55,
-    metalness: 0.04,
-  });
-  instanceMatCache.set(key, material);
-  return material;
-}
-
 function paint(draw: FacePainter) {
   const canvas = document.createElement("canvas");
   canvas.width = 256;

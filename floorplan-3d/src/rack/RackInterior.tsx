@@ -411,7 +411,20 @@ export function RackInterior({
   const [items, setItems] = useState<ShelfItem[]>([]);
   const [shelfDirty, setShelfDirty] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [selectMode, setSelectMode] = useState(false);
+  const [fillMenuOpen, setFillMenuOpen] = useState(false);
+  const clearSelection = () => setSelectedIds([]);
+  const selectOnly = (id: number | null) => setSelectedIds(id == null ? [] : [id]);
+  const handleSelectItem = (id: number) => {
+    if (selectMode) {
+      setSelectedIds((prev) =>
+        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+      );
+    } else {
+      setSelectedIds([id]);
+    }
+  };
   const [detailItemId, setDetailItemId] = useState<number | null>(null);
   const [activeRows, setActiveRows] = useState<Record<number, number>>({});
   const [rowCounts, setRowCounts] = useState<Record<number, number>>({});
@@ -426,6 +439,7 @@ export function RackInterior({
     shelf: number;
     x: number;
     y: number;
+    mode?: "add" | "context";
   } | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [viewScale, setViewScale] = useState(1);
@@ -577,7 +591,7 @@ export function RackInterior({
       const list = await listShelfItems(rack.id);
       setItems(list);
       setShelfDirty(false);
-      setSelectedItemId(null);
+      clearSelection();
       setDetailItemId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось откатить");
@@ -720,8 +734,8 @@ export function RackInterior({
       const prevItems = items;
       const removeIds = new Set(onRow.map((item) => item.id));
       setItems((prev) => prev.filter((item) => !removeIds.has(item.id)));
-      if (selectedItemId != null && removeIds.has(selectedItemId)) {
-        setSelectedItemId(null);
+      if (selectedIds.some((id) => removeIds.has(id))) {
+        clearSelection();
       }
       if (detailItemId != null && removeIds.has(detailItemId)) {
         setDetailItemId(null);
@@ -802,7 +816,7 @@ export function RackInterior({
         setItems((prev) => [...prev, created]);
         markShelfDirty();
         setPopup(null);
-        setSelectedItemId(created.id);
+        selectOnly(created.id);
         suppressDetailUntilRef.current = Date.now() + 1200;
         setDetailItemId(null);
         return;
@@ -817,7 +831,7 @@ export function RackInterior({
       });
       setItems((prev) => [...prev, created]);
       setPopup(null);
-      setSelectedItemId(created.id);
+      selectOnly(created.id);
       // Никогда не открываем карточку сразу после создания — на телефоне
       // клик из меню иначе «пробивает» в поле и поднимает клавиатуру.
       suppressDetailUntilRef.current = Date.now() + 1200;
@@ -832,7 +846,7 @@ export function RackInterior({
     try {
       if (requireConfirmRef.current || id < 0) {
         setItems((prev) => prev.filter((item) => item.id !== id));
-        if (selectedItemId === id) setSelectedItemId(null);
+        setSelectedIds((prev) => prev.filter((x) => x !== id));
         if (detailItemId === id) setDetailItemId(null);
         if (requireConfirmRef.current) markShelfDirty();
         else if (id > 0) await deleteShelfItem(id);
@@ -840,10 +854,96 @@ export function RackInterior({
       }
       await deleteShelfItem(id);
       setItems((prev) => prev.filter((item) => item.id !== id));
-      if (selectedItemId === id) setSelectedItemId(null);
+      setSelectedIds((prev) => prev.filter((x) => x !== id));
       if (detailItemId === id) setDetailItemId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось удалить");
+    }
+  };
+
+  const removeSelectedItems = async () => {
+    if (!canEditShelves || selectedIds.length === 0) return;
+    const ids = [...selectedIds];
+    for (const id of ids) {
+      await removeItem(id);
+    }
+  };
+
+  const fillShelfRow = async (shelfIndex: number, type: ShelfItemType) => {
+    if (!canEditShelves) return;
+    const depthRow = rowOf(shelfIndex);
+    const { height: shelfHeight, width: shelfWidth } = estimateShelfSize();
+    const widthRatio = type === "stack" ? 1.25 : 1;
+    const width = entityPixelWidth({ widthRatio, type }, shelfHeight);
+
+    let working = items.filter(
+      (item) =>
+        item.shelfIndex === shelfIndex && (item.depthRow ?? 1) === depthRow,
+    );
+    const createdLocal: ShelfItem[] = [];
+
+    while (true) {
+      const posX = nextFreePos(working, width, shelfHeight, shelfWidth);
+      if (posX == null) break;
+      const tempId = tempIdRef.current--;
+      const draft: ShelfItem = {
+        id: tempId,
+        rackId: rack.id,
+        shelfIndex,
+        type,
+        widthRatio,
+        posX,
+        depthRow,
+        stackOrder: 0,
+        title: "",
+        details: "",
+        quantity: "",
+        infoUpdatedAt: null,
+        contents: [],
+      };
+      working = [...working, draft];
+      createdLocal.push(draft);
+      if (createdLocal.length > 200) break;
+    }
+
+    if (createdLocal.length === 0) {
+      setError("Нет места на полке");
+      setPopup(null);
+      setFillMenuOpen(false);
+      return;
+    }
+
+    try {
+      if (requireConfirmRef.current) {
+        setItems((prev) => [...prev, ...createdLocal]);
+        markShelfDirty();
+        setSelectedIds(createdLocal.map((item) => item.id));
+        setPopup(null);
+        setFillMenuOpen(false);
+        suppressDetailUntilRef.current = Date.now() + 1200;
+        setDetailItemId(null);
+        return;
+      }
+
+      const created: ShelfItem[] = [];
+      for (const draft of createdLocal) {
+        const item = await createShelfItem(rack.id, {
+          shelfIndex,
+          type,
+          depthRow,
+          ...(type === "stack" ? { widthRatio: 1.25 } : {}),
+          posX: draft.posX,
+        });
+        created.push(item);
+      }
+      setItems((prev) => [...prev, ...created]);
+      setSelectedIds(created.map((item) => item.id));
+      setPopup(null);
+      setFillMenuOpen(false);
+      suppressDetailUntilRef.current = Date.now() + 1200;
+      setDetailItemId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось заполнить полку");
     }
   };
 
@@ -906,84 +1006,97 @@ export function RackInterior({
   };
 
   const copySelectedItem = async () => {
-    if (!canEditShelves || selectedItemId == null) return;
-    const source = items.find((entry) => entry.id === selectedItemId);
-    if (!source) return;
-    const depthRow = source.depthRow ?? 1;
-    const { height: shelfHeight, width: shelfWidth } = estimateShelfSize();
-    const width = entityPixelWidth(source, shelfHeight);
-    const sameRow = items.filter(
-      (entry) =>
-        entry.shelfIndex === source.shelfIndex &&
-        (entry.depthRow ?? 1) === depthRow,
-    );
-    const others = groupShelfFootprints(sameRow, shelfHeight).map((print) => ({
-      posX: print.posX,
-      width: print.width,
-    }));
-    const preferred = (source.posX ?? 0) + width + ENTITY_GAP;
-    const nextPos = findSeparatePosX(
-      preferred,
-      width,
-      others,
-      shelfWidth,
-      shelfHeight,
-    );
-    if (nextPos == null) {
-      setError("Нет места на полке — копировать нельзя");
-      return;
-    }
+    if (!canEditShelves || selectedIds.length === 0) return;
+    const sources = selectedIds
+      .map((id) => items.find((entry) => entry.id === id))
+      .filter((entry): entry is ShelfItem => entry != null);
+    if (sources.length === 0) return;
+
+    const newIds: number[] = [];
+    let working = [...items];
 
     try {
-      if (requireConfirmRef.current) {
-        const tempId = tempIdRef.current--;
-        const created: ShelfItem = {
-          ...source,
-          id: tempId,
+      for (const source of sources) {
+        const depthRow = source.depthRow ?? 1;
+        const { height: shelfHeight, width: shelfWidth } = estimateShelfSize();
+        const width = entityPixelWidth(source, shelfHeight);
+        const sameRow = working.filter(
+          (entry) =>
+            entry.shelfIndex === source.shelfIndex &&
+            (entry.depthRow ?? 1) === depthRow,
+        );
+        const others = groupShelfFootprints(sameRow, shelfHeight).map((print) => ({
+          posX: print.posX,
+          width: print.width,
+        }));
+        const preferred = (source.posX ?? 0) + width + ENTITY_GAP;
+        const nextPos = findSeparatePosX(
+          preferred,
+          width,
+          others,
+          shelfWidth,
+          shelfHeight,
+        );
+        if (nextPos == null) {
+          setError("Нет места на полке — копировать нельзя");
+          break;
+        }
+
+        if (requireConfirmRef.current) {
+          const tempId = tempIdRef.current--;
+          const created: ShelfItem = {
+            ...source,
+            id: tempId,
+            posX: nextPos,
+            stackOrder: 0,
+            contents: (source.contents ?? []).map((c, index) => ({
+              ...c,
+              id: index + 1,
+              shelfItemId: tempId,
+            })),
+          };
+          working = [...working, created];
+          newIds.push(tempId);
+          continue;
+        }
+
+        const created = await createShelfItem(rack.id, {
+          shelfIndex: source.shelfIndex,
+          type: source.type,
+          depthRow,
+          widthRatio: source.widthRatio,
           posX: nextPos,
-          stackOrder: 0,
-          contents: (source.contents ?? []).map((c, index) => ({
-            ...c,
-            id: index + 1,
-            shelfItemId: tempId,
-          })),
-        };
-        setItems((prev) => [...prev, created]);
-        markShelfDirty();
-        setSelectedItemId(tempId);
-        return;
+        });
+        const updated = await updateShelfItem(created.id, {
+          title: source.title,
+          details: source.details,
+          quantity: source.quantity,
+          widthRatio: source.widthRatio,
+          posX: nextPos,
+        });
+        let nextContents = updated.contents ?? [];
+        if ((source.contents ?? []).length > 0) {
+          const res = await setShelfItemContents(
+            created.id,
+            (source.contents ?? []).map((c) => ({
+              kind: c.kind,
+              refId: c.refId,
+              nameSnapshot: c.nameSnapshot,
+              typeSnapshot: c.typeSnapshot,
+              quantity: c.quantity,
+            })),
+          );
+          nextContents = res.items;
+        }
+        const full = { ...updated, contents: nextContents };
+        working = [...working, full];
+        newIds.push(full.id);
       }
 
-      const created = await createShelfItem(rack.id, {
-        shelfIndex: source.shelfIndex,
-        type: source.type,
-        depthRow,
-        widthRatio: source.widthRatio,
-        posX: nextPos,
-      });
-      const updated = await updateShelfItem(created.id, {
-        title: source.title,
-        details: source.details,
-        quantity: source.quantity,
-        widthRatio: source.widthRatio,
-        posX: nextPos,
-      });
-      let nextContents = updated.contents ?? [];
-      if ((source.contents ?? []).length > 0) {
-        const res = await setShelfItemContents(
-          created.id,
-          (source.contents ?? []).map((c) => ({
-            kind: c.kind,
-            refId: c.refId,
-            nameSnapshot: c.nameSnapshot,
-            typeSnapshot: c.typeSnapshot,
-            quantity: c.quantity,
-          })),
-        );
-        nextContents = res.items;
-      }
-      setItems((prev) => [...prev, { ...updated, contents: nextContents }]);
-      setSelectedItemId(created.id);
+      if (newIds.length === 0) return;
+      setItems(working);
+      if (requireConfirmRef.current) markShelfDirty();
+      setSelectedIds(newIds);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось скопировать");
     }
@@ -1390,7 +1503,7 @@ export function RackInterior({
             : entry,
         ),
       );
-      setSelectedItemId(id);
+      selectOnly(id);
       setDetailItemId(null);
 
       try {
@@ -1405,7 +1518,7 @@ export function RackInterior({
         });
         const fresh = await listShelfItems(rack.id);
         setItems(fresh);
-        setSelectedItemId(id);
+        selectOnly(id);
       } catch (err) {
         setItems(prevItems);
         setError(
@@ -1556,8 +1669,8 @@ export function RackInterior({
       document.body.classList.remove("long-pressing");
       clearDomSelection();
       panRef.current = null;
-      setPopup({ shelf, x, y });
-      setSelectedItemId(null);
+      setPopup({ shelf, x, y, mode: "add" });
+      clearSelection();
     }, 480);
     longPressRef.current = { shelf, timer, x, y };
   };
@@ -1767,15 +1880,36 @@ export function RackInterior({
 
         <div className="interior-bar-actions interior-bar-actions--desktop">
           {canEditShelves && (
-            <button
-              type="button"
-              className="btn ghost"
-              disabled={selectedItemId == null}
-              onClick={() => void copySelectedItem()}
-              title="Скопировать выбранную коробку"
-            >
-              Копировать
-            </button>
+            <>
+              <button
+                type="button"
+                className={selectMode ? "btn tool active" : "btn tool"}
+                onClick={() => setSelectMode((v) => !v)}
+                title="Режим выделения сущностей"
+              >
+                Выделение
+              </button>
+              {selectedIds.length > 0 ? (
+                <button
+                  type="button"
+                  className="btn danger"
+                  onClick={() => void removeSelectedItems()}
+                >
+                  Удалить{selectedIds.length > 1 ? ` (${selectedIds.length})` : ""}
+                </button>
+              ) : null}
+              {selectedIds.length > 0 ? (
+                <button
+                  type="button"
+                  className="btn primary"
+                  title="Скопировать выбранные сущности"
+                  onClick={() => void copySelectedItem()}
+                >
+                  Скопировать
+                  {selectedIds.length > 1 ? ` (${selectedIds.length})` : ""}
+                </button>
+              ) : null}
+            </>
           )}
           {requireShelfConfirm && canEditShelves && (
             <>
@@ -1796,18 +1930,6 @@ export function RackInterior({
                 Отменить правки
               </button>
             </>
-          )}
-          {canEditShelves && (
-            <button
-              type="button"
-              className="btn danger interior-delete"
-              disabled={selectedItemId == null}
-              onClick={() => {
-                if (selectedItemId != null) void removeItem(selectedItemId);
-              }}
-            >
-              Удалить
-            </button>
           )}
         </div>
 
@@ -1846,26 +1968,36 @@ export function RackInterior({
                 <button
                   type="button"
                   role="menuitem"
-                  className="btn ghost"
-                  disabled={selectedItemId == null}
+                  className={selectMode ? "btn tool active" : "btn tool"}
+                  onClick={() => setSelectMode((v) => !v)}
+                >
+                  Выделение
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="btn primary"
+                  disabled={selectedIds.length === 0}
                   onClick={() => {
                     setToolsOpen(false);
                     void copySelectedItem();
                   }}
                 >
-                  Копировать
+                  Скопировать
+                  {selectedIds.length > 1 ? ` (${selectedIds.length})` : ""}
                 </button>
                 <button
                   type="button"
                   role="menuitem"
                   className="btn danger"
-                  disabled={selectedItemId == null}
+                  disabled={selectedIds.length === 0}
                   onClick={() => {
                     setToolsOpen(false);
-                    if (selectedItemId != null) void removeItem(selectedItemId);
+                    void removeSelectedItems();
                   }}
                 >
                   Удалить
+                  {selectedIds.length > 1 ? ` (${selectedIds.length})` : ""}
                 </button>
               </div>
             )}
@@ -1888,7 +2020,7 @@ export function RackInterior({
         onWheel={onViewportWheel}
         onPointerDown={onViewportPointerDown}
         onClick={() => {
-          setSelectedItemId(null);
+          clearSelection();
           setPopup(null);
           setRowMenuShelf(null);
           setToolsOpen(false);
@@ -1973,7 +2105,17 @@ export function RackInterior({
                     onPointerUp={clearLongPress}
                     onPointerLeave={clearLongPress}
                     onPointerCancel={clearLongPress}
-                    onContextMenu={(e) => e.preventDefault()}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (!canEditShelves) return;
+                      setFillMenuOpen(false);
+                      setPopup({
+                        shelf: n,
+                        x: e.clientX,
+                        y: e.clientY,
+                        mode: "context",
+                      });
+                    }}
                   >
                     <div
                       className="shelf-main"
@@ -1986,7 +2128,7 @@ export function RackInterior({
                         backgroundItems={backgroundItems}
                         shelfIndex={n}
                         depthRow={depthRow}
-                        selectedItemId={selectedItemId}
+                        selectedIds={selectedIds}
                         highlightItemId={focusItemId}
                         getScale={() => viewScaleRef.current}
                         viewScale={viewScale}
@@ -1994,13 +2136,13 @@ export function RackInterior({
                         onDragHover={setDropHover}
                         onSelect={(id) => {
                           setPopup(null);
-                          setSelectedItemId(id);
+                          handleSelectItem(id);
                           onClearFocus?.();
                         }}
                         onOpenDetail={(id) => {
                           if (Date.now() < suppressDetailUntilRef.current) return;
                           setPopup(null);
-                          setSelectedItemId(id);
+                          selectOnly(id);
                           setDetailItemId(id);
                           onClearFocus?.();
                         }}
@@ -2121,7 +2263,17 @@ export function RackInterior({
                     onPointerUp={clearLongPress}
                     onPointerLeave={clearLongPress}
                     onPointerCancel={clearLongPress}
-                    onContextMenu={(e) => e.preventDefault()}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      if (!canEditShelves) return;
+                      setFillMenuOpen(false);
+                      setPopup({
+                        shelf: n,
+                        x: e.clientX,
+                        y: e.clientY,
+                        mode: "context",
+                      });
+                    }}
                   >
                     <div
                       className="shelf-main"
@@ -2134,7 +2286,7 @@ export function RackInterior({
                         backgroundItems={backgroundItems}
                         shelfIndex={n}
                         depthRow={depthRow}
-                        selectedItemId={selectedItemId}
+                        selectedIds={selectedIds}
                         highlightItemId={focusItemId}
                         getScale={() => viewScaleRef.current}
                         viewScale={viewScale}
@@ -2142,13 +2294,13 @@ export function RackInterior({
                         onDragHover={setDropHover}
                         onSelect={(id) => {
                           setPopup(null);
-                          setSelectedItemId(id);
+                          handleSelectItem(id);
                           onClearFocus?.();
                         }}
                         onOpenDetail={(id) => {
                           if (Date.now() < suppressDetailUntilRef.current) return;
                           setPopup(null);
-                          setSelectedItemId(id);
+                          selectOnly(id);
                           setDetailItemId(id);
                           onClearFocus?.();
                         }}
@@ -2309,7 +2461,10 @@ export function RackInterior({
       {popup && (
         <div
           className="shelf-popup-backdrop"
-          onClick={() => setPopup(null)}
+          onClick={() => {
+            setPopup(null);
+            setFillMenuOpen(false);
+          }}
           onPointerDown={(e) => e.stopPropagation()}
         >
           <div
@@ -2324,32 +2479,83 @@ export function RackInterior({
             <p className="shelf-popup-title">
               {shelfTitle(popup.shelf)} · ряд {rowOf(popup.shelf)}
             </p>
-            {(
-              [
-                ["box", "Коробка"],
-                ["container", "Контейнер"],
-                ["cell", "Ячейка"],
-                ["stack", "Коробка с запасом"],
-              ] as const
-            ).map(([type, title]) => (
-              <button
-                key={type}
-                type="button"
-                role="menuitem"
-                className="shelf-popup-item"
-                onClick={() => void addItem(popup.shelf, type)}
-              >
-                <EntityGlyph type={type} />
-                <span>{title}</span>
-              </button>
-            ))}
-            <button
-              type="button"
-              className="shelf-popup-cancel"
-              onClick={() => setPopup(null)}
-            >
-              Отмена
-            </button>
+            {popup.mode === "context" ? (
+              <>
+                <div className="shelf-popup-fill">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="shelf-popup-item"
+                    aria-expanded={fillMenuOpen}
+                    onClick={() => setFillMenuOpen((v) => !v)}
+                  >
+                    <span>Заполнить…</span>
+                  </button>
+                  {fillMenuOpen && (
+                    <div className="shelf-popup-fill-menu" role="menu">
+                      {(
+                        [
+                          ["box", "Коробка"],
+                          ["container", "Контейнер"],
+                          ["cell", "Ячейка"],
+                          ["stack", "Коробка с запасом"],
+                        ] as const
+                      ).map(([type, title]) => (
+                        <button
+                          key={type}
+                          type="button"
+                          role="menuitem"
+                          className="shelf-popup-item"
+                          onClick={() => void fillShelfRow(popup.shelf, type)}
+                        >
+                          <EntityGlyph type={type} />
+                          <span>{title}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="shelf-popup-cancel"
+                  onClick={() => {
+                    setPopup(null);
+                    setFillMenuOpen(false);
+                  }}
+                >
+                  Отмена
+                </button>
+              </>
+            ) : (
+              <>
+                {(
+                  [
+                    ["box", "Коробка"],
+                    ["container", "Контейнер"],
+                    ["cell", "Ячейка"],
+                    ["stack", "Коробка с запасом"],
+                  ] as const
+                ).map(([type, title]) => (
+                  <button
+                    key={type}
+                    type="button"
+                    role="menuitem"
+                    className="shelf-popup-item"
+                    onClick={() => void addItem(popup.shelf, type)}
+                  >
+                    <EntityGlyph type={type} />
+                    <span>{title}</span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="shelf-popup-cancel"
+                  onClick={() => setPopup(null)}
+                >
+                  Отмена
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -2402,7 +2608,7 @@ function ShelfItemsScroller({
   backgroundItems = [],
   shelfIndex,
   depthRow,
-  selectedItemId,
+  selectedIds,
   highlightItemId = null,
   getScale,
   viewScale = 1,
@@ -2425,7 +2631,7 @@ function ShelfItemsScroller({
   backgroundItems?: ShelfItem[];
   shelfIndex: number;
   depthRow: number;
-  selectedItemId: number | null;
+  selectedIds: number[];
   highlightItemId?: number | null;
   getScale: () => number;
   viewScale?: number;
@@ -2546,7 +2752,7 @@ function ShelfItemsScroller({
                   item={item}
                   shelfIndex={shelfIndex}
                   depthRow={depthRow}
-                  selected={!inactive && item.id === selectedItemId}
+                  selected={!inactive && selectedIds.includes(item.id)}
                   highlighted={!inactive && item.id === highlightItemId}
                   stacked={stacked}
                   inactive={inactive}
