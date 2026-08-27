@@ -7,8 +7,8 @@ dist/
 # Local data & secrets
 data/
 **/data/
-uploads/
-**/uploads/
+# Runtime upload files live under data/uploads (see UPLOADS_DIR / DB_PATH).
+# Do not ignore backend/src/uploads — that is source code.
 .env
 .deploy.env
 *.db
