@@ -4,14 +4,17 @@ import { ArrowLeft, RotateCcw } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { ItemChat } from "../components/ItemChat";
-import { CheckboxIndicator } from "../components/CheckboxIndicator";
+import { ChecklistItemRow } from "../components/ChecklistItemRow";
 import type { Checklist } from "../types";
 import { formatMoscowDeadline, formatTaskDate } from "../utils/date";
 import {
   checklistShowsFailedItems,
   isChecklistOverdue,
 } from "../utils/checklistStatus";
-import { nextChecklistItemAction } from "../utils/checklistItemAction";
+import {
+  nextChecklistItemAction,
+  type ChecklistItemAction,
+} from "../utils/checklistItemAction";
 import { isRoot } from "../types";
 
 export function ChecklistDetailPage() {
@@ -71,21 +74,29 @@ export function ChecklistDetailPage() {
         isAdmin)
   );
 
-  const toggleItem = async (itemId: number) => {
+  const toggleItem = async (
+    itemId: number,
+    payload?: boolean | { action: ChecklistItemAction }
+  ) => {
     if (!checklist) return;
     const item = checklist.items.find((i) => i.id === itemId);
     if (!item) return;
-    const action = nextChecklistItemAction(checklist, item, user.id, isAdmin);
-    if (!action || overdue) return;
+
+    let body: boolean | { action: ChecklistItemAction };
+    if (payload !== undefined) {
+      body = payload;
+    } else {
+      const action = nextChecklistItemAction(checklist, item, user.id, isAdmin);
+      if (!action || overdue) return;
+      body = checklist.is_shared ? { action } : action === "complete";
+    }
+
     setActing(true);
     try {
-      const payload = checklist.is_shared
-        ? { action }
-        : action === "complete";
       const { checklist: next } = await api.toggleChecklistItem(
         checklist.id,
         itemId,
-        payload
+        body
       );
       setChecklist(next);
     } catch (err) {
@@ -176,54 +187,20 @@ export function ChecklistDetailPage() {
             </div>
 
             <ul className="mt-4 space-y-2">
-              {checklist.items.map((item) => {
-                const checked = Boolean(item.completed_at);
-                const claimed = Boolean(item.claimed_by) && !checked;
-                const failed = showFailedItems && !checked;
-                const action =
-                  !overdue &&
-                  nextChecklistItemAction(checklist, item, user.id, isAdmin);
-                const canAct = Boolean(action);
-                return (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      disabled={!canAct || acting}
-                      onClick={() => void toggleItem(item.id)}
-                      className={`flex w-full items-start gap-3 rounded-2xl px-2 py-1.5 text-left transition ${
-                        canAct ? "hover:bg-black/5" : "cursor-default"
-                      }`}
-                    >
-                      <CheckboxIndicator
-                        checked={checked}
-                        claimed={claimed}
-                        failed={failed}
-                        className="mt-0"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={`block break-words text-sm leading-6 ${
-                            failed
-                              ? "card-accent-desc line-through opacity-80"
-                              : checked
-                                ? incompleteAfterClose || overdue
-                                  ? "card-accent-desc line-through opacity-70"
-                                  : "text-gray-400 line-through"
-                                : "text-gray-800"
-                          }`}
-                        >
-                          {item.title}
-                        </span>
-                        {claimed && item.claimant && (
-                          <span className="mt-0.5 block text-[11px] text-sky-600">
-                            В работе: {item.claimant.nickname}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
+              {checklist.items.map((item) => (
+                <ChecklistItemRow
+                  key={item.id}
+                  checklist={checklist}
+                  item={item}
+                  currentUserId={user.id}
+                  isAdmin={isAdmin}
+                  overdue={overdue}
+                  showFailedItems={showFailedItems}
+                  incompleteAfterClose={incompleteAfterClose}
+                  acting={acting}
+                  onToggle={(itemId, payload) => void toggleItem(itemId, payload)}
+                />
+              ))}
             </ul>
 
             <div className="mt-3 space-y-0.5">

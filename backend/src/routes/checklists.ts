@@ -11,6 +11,7 @@ import {
   setChecklistItemCompleted,
   claimChecklistItem,
   completeChecklistItem,
+  unclaimChecklistItem,
   uncompleteChecklistItem,
   updateChecklist,
 } from "../db/queries/checklists.js";
@@ -23,6 +24,7 @@ import {
   canEditChecklist,
   canRestoreChecklist,
   canToggleChecklistItem,
+  canUnclaimChecklistItem,
   canUncompleteSharedChecklistItem,
   canViewChecklist,
   filterVisibleChecklists,
@@ -85,7 +87,7 @@ const updateSchema = z
   });
 
 const toggleSchema = z.object({
-  action: z.enum(["claim", "complete", "uncomplete"]).optional(),
+  action: z.enum(["claim", "unclaim", "complete", "uncomplete"]).optional(),
   completed: z.boolean().optional(),
 });
 
@@ -397,6 +399,16 @@ router.post("/:id/items/:itemId/toggle", requireAuth, (req: AuthRequest, res) =>
         return;
       }
       updated = claimChecklistItem(checklistId, itemId, user.id);
+    } else if (action === "unclaim") {
+      if (!canUnclaimChecklistItem(user, checklist, item)) {
+        deny(
+          item.claimed_by && item.claimed_by !== user.id
+            ? "Чужой пункт может освободить только постановщик или админ"
+            : "Нет прав снять пункт с работы"
+        );
+        return;
+      }
+      updated = unclaimChecklistItem(checklistId, itemId);
     } else if (action === "complete") {
       if (!canCompleteSharedChecklistItem(user, checklist, item)) {
         deny(

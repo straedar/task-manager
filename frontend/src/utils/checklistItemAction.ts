@@ -1,6 +1,6 @@
 import type { Checklist, ChecklistItem } from "../types";
 
-export type ChecklistItemAction = "claim" | "complete" | "uncomplete";
+export type ChecklistItemAction = "claim" | "unclaim" | "complete" | "uncomplete";
 
 /** Следующее действие по клику на пункт (null — клик недоступен). */
 export function nextChecklistItemAction(
@@ -38,4 +38,17 @@ export function canActOnChecklistItem(
   isAdmin: boolean
 ): boolean {
   return nextChecklistItemAction(checklist, item, userId, isAdmin) !== null;
+}
+
+/** Можно ли снять плей (отказаться от пункта в работе). */
+export function canUnclaimChecklistItem(
+  checklist: Checklist,
+  item: ChecklistItem,
+  userId: number,
+  isAdmin: boolean
+): boolean {
+  if (checklist.status !== "open" || !checklist.is_shared) return false;
+  if (item.completed_at || !item.claimed_by) return false;
+  if (item.claimed_by === userId) return true;
+  return checklist.created_by === userId || isAdmin;
 }

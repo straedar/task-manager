@@ -314,6 +314,30 @@ export function claimChecklistItem(
   return getChecklistById(checklistId);
 }
 
+/** Снять плей — вернуть пункт в свободные (ещё не выполнен). */
+export function unclaimChecklistItem(
+  checklistId: number,
+  itemId: number
+): ChecklistWithDetails | null {
+  const checklist = getChecklistById(checklistId);
+  if (!checklist || !checklist.is_shared || checklist.status !== "open") return null;
+  if (isChecklistPastDue(checklist)) return null;
+
+  const item = checklist.items.find((i) => i.id === itemId);
+  if (!item || item.completed_at || !item.claimed_by) return null;
+
+  const result = getDb()
+    .prepare(
+      `UPDATE checklist_items
+       SET claimed_by = NULL, claimed_at = NULL
+       WHERE id = ? AND checklist_id = ? AND completed_at IS NULL AND claimed_by IS NOT NULL`
+    )
+    .run(itemId, checklistId);
+
+  if (result.changes === 0) return null;
+  return getChecklistById(checklistId);
+}
+
 /** Завершить пункт (обычный или взятый в работу). */
 export function completeChecklistItem(
   checklistId: number,

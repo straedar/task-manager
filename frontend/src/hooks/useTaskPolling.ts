@@ -91,7 +91,7 @@ export function useTaskPolling(enabled: boolean) {
   const handleToggleChecklistItem = async (
     checklistId: number,
     itemId: number,
-    payload: boolean | { action: "claim" | "complete" | "uncomplete" }
+    payload: boolean | { action: "claim" | "unclaim" | "complete" | "uncomplete" }
   ) => {
     setActingChecklistId(checklistId);
     try {

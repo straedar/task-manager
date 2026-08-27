@@ -309,7 +309,7 @@ export const api = {
   toggleChecklistItem: (
     checklistId: number,
     itemId: number,
-    payload: boolean | { action: "claim" | "complete" | "uncomplete" }
+    payload: boolean | { action: "claim" | "unclaim" | "complete" | "uncomplete" }
   ) =>
     request<{ checklist: Checklist }>(
       `/api/checklists/${checklistId}/items/${itemId}/toggle`,

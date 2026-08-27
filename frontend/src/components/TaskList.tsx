@@ -30,7 +30,7 @@ interface TaskListProps {
   onToggleChecklistItem: (
     checklistId: number,
     itemId: number,
-    payload: boolean | { action: "claim" | "complete" | "uncomplete" }
+    payload: boolean | { action: "claim" | "unclaim" | "complete" | "uncomplete" }
   ) => void;
   onDeleteChecklist: (id: number) => void;
   onUpdated: () => void;

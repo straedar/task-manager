@@ -162,6 +162,19 @@ export function canCompleteSharedChecklistItem(
   return canManageSharedChecklistItem(user, checklist);
 }
 
+/** Снять плей: отказаться от пункта, взятого в работу (ещё не выполненного). */
+export function canUnclaimChecklistItem(
+  user: UserPublic,
+  checklist: ChecklistWithDetails,
+  item: ChecklistWithDetails["items"][number]
+): boolean {
+  if (!checklist.is_shared) return false;
+  if (!checklistItemsEditable(user, checklist)) return false;
+  if (item.completed_at || !item.claimed_by) return false;
+  if (item.claimed_by === user.id) return true;
+  return canManageSharedChecklistItem(user, checklist);
+}
+
 export function canUncompleteSharedChecklistItem(
   user: UserPublic,
   checklist: ChecklistWithDetails,
